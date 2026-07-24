@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/nextjs';
 import Papa from 'papaparse';
+import { applyAction, COUNTRY_MAP } from '@/lib/agentTools';
 
 // ── Constants ────────────────────────────────────────────
 const TABS = ['ingest','profile','rules','cleanse','audit','dedup','db','setup'];
@@ -15,12 +16,6 @@ const NAV_LABELS = {
   ingest:'📂 Ingest', profile:'🔍 Profile', rules:'⚙️ Rules',
   cleanse:'⚡ AI Cleanse', audit:'📋 Audit Log', dedup:'🔁 Fuzzy Dedup',
   db:'🗄️ Database', setup:'🤖 Groq Setup',
-};
-
-const COUNTRY_MAP = {
-  'in':'India','ind':'India','india':'India','us':'United States','usa':'United States',
-  'united states':'United States','uk':'United Kingdom','gb':'United Kingdom',
-  'au':'Australia','aus':'Australia','ca':'Canada','sg':'Singapore','uae':'UAE','ae':'UAE',
 };
 
 const GROQ_MODELS = [
@@ -68,37 +63,13 @@ const SAMPLES = {
   },
 };
 
-const DEFAULT_RULES = [
-  {id:1,field:'Name',type:'Title Case',action:'title_case',active:true},
-  {id:2,field:'Email',type:'Normalize Email',action:'validate_email',active:true},
-  {id:3,field:'Phone',type:'Normalize Phone',action:'normalize_phone',active:true},
-  {id:4,field:'Country',type:'Standardize Country',action:'std_country',active:true},
-  {id:5,field:'City',type:'Title Case City',action:'title_case_city',active:true},
-];
+const DEFAULT_RULES = [];
 
 const ACTIONS = ['trim','title_case','upper_case','lower_case','validate_email',
   'normalize_phone','std_country','title_case_city','std_state_code','fix_date',
   'normalize_currency','normalize_decimal','remove_special'];
 
-// ── Helpers ──────────────────────────────────────────────
-function applyAction(action, val) {
-  if (!val) return val;
-  switch (action) {
-    case 'trim': return val.trim();
-    case 'title_case': return val.trim().replace(/\b\w/g, c => c.toUpperCase()).replace(/\b\w+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
-    case 'upper_case': return val.trim().toUpperCase();
-    case 'lower_case': return val.trim().toLowerCase();
-    case 'validate_email': return val.trim().toLowerCase().replace(/@@+/g, '@').replace(/\s/g, '');
-    case 'normalize_phone': { let d = val.replace(/\D/g, ''); if (d.startsWith('91') && d.length === 12) d = d.slice(2); if (d.startsWith('0') && d.length === 11) d = d.slice(1); return d; }
-    case 'std_country': return COUNTRY_MAP[val.trim().toLowerCase()] || (val.trim().charAt(0).toUpperCase() + val.trim().slice(1).toLowerCase());
-    case 'title_case_city': return val.trim().charAt(0).toUpperCase() + val.trim().slice(1).toLowerCase();
-    case 'std_state_code': return val.trim().length <= 3 ? val.trim().toUpperCase() : val.trim().charAt(0).toUpperCase() + val.trim().slice(1).toLowerCase();
-    case 'normalize_currency': return val.replace(/[^\d.]/g, '');
-    case 'normalize_decimal': { const n = parseFloat(val.replace(/[^\d.\-]/g, '')); return isNaN(n) ? val : n.toString(); }
-    case 'remove_special': return val.replace(/[^\w\s\-.]/g, '').trim();
-    default: return val;
-  }
-}
+// applyAction and COUNTRY_MAP imported from @/lib/agentTools
 
 function autoActions(col) {
   const c = col.toLowerCase();
@@ -165,6 +136,7 @@ export default function Home() {
   const [stats, setStats] = useState({ total: 0, issues: 0, fixed: 0, review: 0 });
   const [dqScore, setDqScore] = useState(null);
   const [currentModel, setCurrentModel] = useState('llama-3.3-70b-versatile');
+  const [systemContext, setSystemContext] = useState('');
   const [groqStatus, setGroqStatus] = useState('checking'); // 'online'|'offline'|'no_key'|'checking'
   const [groqModels, setGroqModels] = useState([]);
   const [profileData, setProfileData] = useState(null);
@@ -173,7 +145,7 @@ export default function Home() {
   const [pastJobs, setPastJobs] = useState([]);
 
   // AI chat
-  const [rulesMsgs, setRulesMsgs] = useState([{ cls: 'sys', text: 'Describe your data and I\'ll suggest cleansing rules...' }]);
+  const [rulesMsgs, setRulesMsgs] = useState([{ cls: 'sys', text: 'Tell me what rules to create — e.g. "add rules for name, email and phone" — and I\'ll add them to the list above.' }]);
   const [rulesInput, setRulesInput] = useState('');
   const [cleanseMsgs, setCleanseMsgs] = useState([{ cls: 'sys', text: 'Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]);
   const [cleanseInput, setCleanseInput] = useState('');
@@ -327,14 +299,27 @@ export default function Home() {
   async function aiRules() {
     const p = rulesInput.trim(); if (!p) return;
     setRulesInput('');
-    setRulesMsgs(m => [...m, { cls: 'usr', text: 'You: ' + p }, { cls: 'sys loading', text: '...' }]);
+    setRulesMsgs(m => [...m, { cls: 'usr', text: p }, { cls: 'sys loading', text: '...' }]);
     setChatBusy(true);
-    const ctx = rawData ? `Dataset headers: ${rawData.headers.join(', ')}` : '';
+
+    const ctx = rawData ? `Available columns: ${rawData.headers.join(', ')}.` : '';
+    const system = `You are a data quality engineer. Given a user request, output ONLY a JSON array of cleansing rules — no explanation, no markdown, no extra text. Each rule has: field (column name), type (short label), action (one of: trim, title_case, upper_case, lower_case, validate_email, normalize_phone, std_country, title_case_city, std_state_code, fix_date, normalize_currency, normalize_decimal, remove_special). Example: [{"field":"Name","type":"Title Case","action":"title_case"},{"field":"Email","type":"Normalize Email","action":"validate_email"}]`;
+
     const reply = await askGroq(
-      `${ctx ? ctx + '\n\n' : ''}Suggest data cleansing rules for: ${p}\nFormat: Field: X, Rule: Y, Action: Z`,
-      'You are a senior data quality engineer. Be concise and specific.'
+      `${ctx ? ctx + '\n' : ''}Create cleansing rules for: ${p}`,
+      system
     );
-    setRulesMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'res', text: reply }]);
+
+    try {
+      const jsonMatch = reply.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) throw new Error('No JSON array found');
+      const parsed = JSON.parse(jsonMatch[0]);
+      const newRules = parsed.map(r => ({ id: Date.now() + Math.random(), field: r.field || '', type: r.type || r.action, action: r.action || 'trim', active: true }));
+      setRules(existing => [...existing, ...newRules]);
+      setRulesMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'res', text: `✓ Added ${newRules.length} rule(s): ${newRules.map(r => `${r.field} → ${r.action}`).join(', ')}` }]);
+    } catch {
+      setRulesMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'err', text: `Could not parse rules from response. Raw: ${reply.slice(0, 200)}` }]);
+    }
     setChatBusy(false);
   }
 
@@ -353,7 +338,15 @@ export default function Home() {
       const res = await fetch('/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: p, history: agentHistory, headers: rawData.headers, rows: objRows }),
+        body: JSON.stringify({
+          message: p,
+          history: agentHistory,
+          headers: rawData.headers,
+          rows: objRows,
+          userRules: rules,
+          systemContext,
+          model: currentModel,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Agent error');
@@ -424,7 +417,6 @@ export default function Home() {
         <div className="logo">DataCleanse<span>AI</span></div>
         <div style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
           <span className="badge b-pur">Groq Powered</span>
-          <span className="badge b-grn">BODS Alternative v1.0</span>
           <span className={`badge ${groqBadgeClass}`}>{groqBadgeText}</span>
           <SignedOut><SignInButton mode="modal"><button className="btn btn-g btn-sm">Sign In</button></SignInButton></SignedOut>
           <SignedIn><UserButton afterSignOutUrl="/" /></SignedIn>
@@ -602,7 +594,7 @@ export default function Home() {
                     {rulesMsgs.map((m, i) => <div key={i} className={`am ${m.cls}`}>{m.cls === 'sys loading' ? <span className="spin" /> : m.text}</div>)}
                   </div>
                   <div className="ai-inp-row">
-                    <input className="ai-inp" value={rulesInput} placeholder='e.g. "Rules for customer name, email, phone, address"'
+                    <input className="ai-inp" value={rulesInput} placeholder='e.g. "add rules for name, email and phone columns"'
                       onChange={e => setRulesInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && !chatBusy && aiRules()} />
                     <button className="btn btn-p btn-sm" onClick={aiRules} disabled={chatBusy}>Ask</button>
                   </div>
@@ -893,6 +885,24 @@ export default function Home() {
                     <div><span style={{ color: 'var(--grn)' }}>3.</span> Add to your project: <code style={{ background: 'var(--surf2)', padding: '1px 6px', borderRadius: 3, color: 'var(--txt)' }}>GROQ_API_KEY=gsk_...</code> in <code style={{ background: 'var(--surf2)', padding: '1px 6px', borderRadius: 3, color: 'var(--txt)' }}>.env.local</code></div>
                     <div><span style={{ color: 'var(--grn)' }}>4.</span> Restart the dev server and click Refresh above</div>
                     <div style={{ marginTop: 10, color: 'var(--warn)' }}>Note: Groq free tier is generous — no credit card needed to get started.</div>
+                  </div>
+                </div>
+
+                <div className="oll-card">
+                  <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Domain Context</div>
+                  <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--mut)', marginBottom: 8, lineHeight: 1.6 }}>
+                    Tell the AI about your data domain. This is injected into every agent call so it behaves according to your rules — e.g. field formats, mandatory standards, domain-specific logic.
+                  </div>
+                  <textarea
+                    className="inp"
+                    rows={5}
+                    style={{ width: '100%', resize: 'vertical', lineHeight: 1.6 }}
+                    placeholder={`Examples:\n- This is pharmaceutical data. Drug names must be in UPPER_CASE.\n- NDC codes follow the format XXXXX-XXXX-XX. Validate and reformat them.\n- Country must always be the full ISO country name, never abbreviations.\n- Remove any row where Revenue is negative.`}
+                    value={systemContext}
+                    onChange={e => setSystemContext(e.target.value)}
+                  />
+                  <div style={{ marginTop: 6, fontSize: 10, fontFamily: 'var(--mono)', color: 'var(--mut)' }}>
+                    {systemContext.trim() ? `✓ ${systemContext.trim().split('\n').length} line(s) of domain context active` : 'No domain context set — AI uses generic data cleaning behaviour'}
                   </div>
                 </div>
 
