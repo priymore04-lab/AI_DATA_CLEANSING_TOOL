@@ -173,11 +173,13 @@ export default function Home() {
   const [pastJobs, setPastJobs] = useState([]);
 
   // AI chat
-  const [rulesMsgs, setRulesMsgs] = useState([{ cls: 'sys', text: 'Describe your data and I\'ll suggest cleansing rules (requires Ollama)...' }]);
+  const [rulesMsgs, setRulesMsgs] = useState([{ cls: 'sys', text: 'Describe your data and I\'ll suggest cleansing rules...' }]);
   const [rulesInput, setRulesInput] = useState('');
-  const [cleanseMsgs, setCleanseMsgs] = useState([{ cls: 'sys', text: 'Ask me to fix a record, explain a decision, or suggest improvements...' }]);
+  const [cleanseMsgs, setCleanseMsgs] = useState([{ cls: 'sys', text: 'Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]);
   const [cleanseInput, setCleanseInput] = useState('');
+  const [agentHistory, setAgentHistory] = useState([]);
   const [chatBusy, setChatBusy] = useState(false);
+  const cleanseMsgsRef = useRef(null);
 
   // Dedup
   const [dedupCols, setDedupCols] = useState([]);
@@ -228,6 +230,8 @@ export default function Home() {
     setStats({ total: s.rows.length, issues: 0, fixed: 0, review: 0 });
     setDedupCols(s.headers.map(() => false));
     setCleanedData([]); setAuditEntries([]); setDqScore(null);
+    setAgentHistory([]);
+    setCleanseMsgs([{ cls: 'sys', text: 'Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]);
     setTab('ingest');
   }
 
@@ -241,6 +245,8 @@ export default function Home() {
         setStats({ total: rows.length, issues: 0, fixed: 0, review: 0 });
         setDedupCols(headers.map(() => false));
         setCleanedData([]); setAuditEntries([]); setDqScore(null);
+        setAgentHistory([]);
+        setCleanseMsgs([{ cls: 'sys', text: 'Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]);
       },
     });
   }
@@ -333,14 +339,47 @@ export default function Home() {
   }
 
   async function aiChat() {
-    const p = cleanseInput.trim(); if (!p) return;
+    const p = cleanseInput.trim(); if (!p || !rawData) return;
     setCleanseInput('');
-    setCleanseMsgs(m => [...m, { cls: 'usr', text: 'You: ' + p }, { cls: 'sys loading', text: '...' }]);
+    setCleanseMsgs(m => [...m, { cls: 'usr', text: p }, { cls: 'sys loading', text: '...' }]);
     setChatBusy(true);
-    const ctx = `You are a data quality assistant. Context: ${auditEntries.length} audit entries, ${cleanedData.length} records processed.`;
-    const reply = await askGroq(p, ctx);
-    setCleanseMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'res', text: reply }]);
+
+    // Convert array rows → objects for the agent
+    const objRows = rawData.rows.map(row =>
+      Object.fromEntries(rawData.headers.map((h, i) => [h, row[i] ?? '']))
+    );
+
+    try {
+      const res = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: p, history: agentHistory, headers: rawData.headers, rows: objRows }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Agent error');
+
+      // Convert object rows back → arrays and update rawData
+      const newHeaders = data.headers;
+      const newRows = data.rows.map(obj => newHeaders.map(h => obj[h] ?? ''));
+      setRawData({ headers: newHeaders, rows: newRows });
+      setStats(s => ({ ...s, total: newRows.length }));
+
+      // Persist conversation so the agent remembers context
+      setAgentHistory(h => [...h, { role: 'user', content: p }, { role: 'assistant', content: data.reply }]);
+
+      const toolSummary = data.toolLog?.length
+        ? data.toolLog.map(t => `→ ${t.tool}(${Object.entries(t.args).map(([k,v]) => `${k}: ${JSON.stringify(v)}`).join(', ')})`).join('\n')
+        : null;
+
+      setCleanseMsgs(m => [
+        ...m.filter(x => x.cls !== 'sys loading'),
+        { cls: 'res', text: data.reply, toolLog: toolSummary },
+      ]);
+    } catch (err) {
+      setCleanseMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'err', text: err.message }]);
+    }
     setChatBusy(false);
+    setTimeout(() => cleanseMsgsRef.current?.scrollTo(0, 99999), 50);
   }
 
   // ── Fuzzy Dedup ──────────────────────────────────────────
@@ -574,65 +613,105 @@ export default function Home() {
             {/* CLEANSE */}
             {tab === 'cleanse' && (
               <div>
-                <div className="flex-row">
-                  <button className="btn btn-p" onClick={runCleanse} disabled={cleanseBusy || !rawData}>⚡ Run Cleanse</button>
-                  {cleanedData.length > 0 && <>
-                    <button className="btn btn-g btn-sm" onClick={exportClean}>↓ Clean CSV</button>
-                    <button className="btn btn-g btn-sm" onClick={exportAudit}>↓ Audit CSV</button>
-                  </>}
-                  <span style={{ fontSize: 12, color: cleanseMsg.startsWith('✓') ? 'var(--grn)' : 'var(--mut)' }}>{cleanseBusy ? <><span className="spin" /> Processing...</> : cleanseMsg}</span>
-                </div>
-                {cleanedData.length === 0
-                  ? <div className="info">Click "Run Cleanse" to process data with rules + AI.</div>
-                  : (
+                {!rawData && <div className="info">Load data first from the Ingest tab.</div>}
+
+                {rawData && <>
+                  {/* AI Agent — primary action */}
+                  <div className="ai-panel" style={{ marginBottom: 16 }}>
+                    <div className="ai-hdr"><span className="ai-pulse" />Groq AI Cleanse Agent — tell me what to fix</div>
+                    <div className="ai-msgs" ref={cleanseMsgsRef} style={{ maxHeight: 220 }}>
+                      {cleanseMsgs.map((m, i) => (
+                        <div key={i} className={`am ${m.cls}`}>
+                          {m.cls === 'sys loading' ? <><span className="spin" /> Groq is working...</> : m.text}
+                          {m.toolLog && <div style={{ marginTop: 5, fontSize: 10, color: 'var(--mut)', whiteSpace: 'pre' }}>{m.toolLog}</div>}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="ai-inp-row">
+                      <input className="ai-inp" value={cleanseInput}
+                        placeholder={rawData ? `e.g. "title case the Name column", "fix emails", "remove duplicates"` : 'Load data first'}
+                        disabled={chatBusy || !rawData}
+                        onChange={e => setCleanseInput(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && !chatBusy && aiChat()} />
+                      <button className="btn btn-p btn-sm" onClick={aiChat} disabled={chatBusy || !rawData}>
+                        {chatBusy ? <span className="spin" /> : 'Send'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Live data preview — always shows current rawData state */}
+                  <div style={{ marginBottom: 14 }}>
+                    <div className="flex-row">
+                      <span style={{ fontSize: 13, fontWeight: 800 }}>Live Data Preview</span>
+                      <span style={{ fontSize: 11, color: 'var(--mut)', fontFamily: 'var(--mono)' }}>{rawData.rows.length} rows · {rawData.headers.length} cols</span>
+                      <button className="btn btn-g btn-sm" onClick={() => { const csv = Papa.unparse({ fields: rawData.headers, data: rawData.rows }); download(csv, 'data.csv'); }}>↓ Download CSV</button>
+                      {agentHistory.length > 0 && (
+                        <button className="btn btn-d btn-sm" onClick={() => { setAgentHistory([]); setCleanseMsgs([{ cls: 'sys', text: 'Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]); }}>
+                          ↺ Reset chat
+                        </button>
+                      )}
+                    </div>
                     <div className="tbl-wrap"><div className="tbl-scroll">
                       <table className="tbl">
-                        <thead><tr>
-                          <th>Status</th>
-                          {rawData.headers.map(h => <th key={h}>{h}</th>)}
-                          <th>Conf.</th>
-                        </tr></thead>
-                        <tbody>{cleanedData.map(rec => {
-                          const conf = Math.round(rec.confidence * 100);
-                          const cc = conf > 90 ? 'var(--grn)' : conf > 70 ? 'var(--warn)' : 'var(--red)';
-                          const tag = rec.status === 'ok' ? 't-ok' : rec.status === 'fixed' ? 't-fix' : 't-rev';
-                          const lbl = rec.status === 'ok' ? '✓ Clean' : rec.status === 'fixed' ? '⚡ Fixed' : '⚠ Review';
-                          return (
-                            <tr key={rec.id}>
-                              <td><span className={`tag ${tag}`}>{lbl}</span></td>
-                              {rawData.headers.map((h, i) => {
-                                const o = rec.original[i], c = rec.cleaned[i];
-                                return o !== c
-                                  ? <td key={h}><span className="co">{o || '∅'}</span><span className="cc">{c}</span></td>
-                                  : <td key={h}>{c || <span className="ce">∅</span>}</td>;
-                              })}
-                              <td>
-                                <div className="cf">
-                                  <div className="cf-track"><div className="cf-fill" style={{ width: conf + '%', background: cc }} /></div>
-                                  <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: cc, minWidth: 30 }}>{conf}%</span>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}</tbody>
+                        <thead><tr>{rawData.headers.map(h => <th key={h}>{h}</th>)}</tr></thead>
+                        <tbody>{rawData.rows.slice(0, 50).map((row, i) => (
+                          <tr key={i}>{row.map((c, j) => <td key={j}>{c || <span className="ce">∅</span>}</td>)}</tr>
+                        ))}</tbody>
                       </table>
                     </div></div>
-                  )
-                }
+                  </div>
 
-                <div className="ai-panel">
-                  <div className="ai-hdr"><span className="ai-pulse" />Groq Cleanse Assistant</div>
-                  <div className="ai-msgs">
-                    {cleanseMsgs.map((m, i) => <div key={i} className={`am ${m.cls}`}>{m.cls === 'sys loading' ? <span className="spin" /> : m.text}</div>)}
-                  </div>
-                  <div className="ai-inp-row">
-                    <input className="ai-inp" value={cleanseInput}
-                      placeholder='e.g. "why was record 3 flagged?" or "summarize issues"'
-                      onChange={e => setCleanseInput(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && !chatBusy && aiChat()} />
-                    <button className="btn btn-p btn-sm" onClick={aiChat} disabled={chatBusy}>Ask</button>
-                  </div>
-                </div>
+                  {/* Rule-based cleanse — secondary */}
+                  <details style={{ border: '1px solid var(--bdr)', borderRadius: 8, padding: '10px 14px' }}>
+                    <summary style={{ cursor: 'pointer', fontWeight: 800, fontSize: 12, color: 'var(--mut)' }}>⚙️ Rule-Based Cleanse (optional — runs on top of AI changes)</summary>
+                    <div style={{ marginTop: 12 }}>
+                      <div className="flex-row">
+                        <button className="btn btn-p btn-sm" onClick={runCleanse} disabled={cleanseBusy}>⚡ Run Rules</button>
+                        {cleanedData.length > 0 && <>
+                          <button className="btn btn-g btn-sm" onClick={exportClean}>↓ Clean CSV</button>
+                          <button className="btn btn-g btn-sm" onClick={exportAudit}>↓ Audit CSV</button>
+                        </>}
+                        <span style={{ fontSize: 11, color: cleanseMsg.startsWith('✓') ? 'var(--grn)' : 'var(--mut)' }}>
+                          {cleanseBusy ? <><span className="spin" /> Processing...</> : cleanseMsg}
+                        </span>
+                      </div>
+                      {cleanedData.length > 0 && (
+                        <div className="tbl-wrap" style={{ marginTop: 10 }}><div className="tbl-scroll">
+                          <table className="tbl">
+                            <thead><tr>
+                              <th>Status</th>
+                              {rawData.headers.map(h => <th key={h}>{h}</th>)}
+                              <th>Conf.</th>
+                            </tr></thead>
+                            <tbody>{cleanedData.map(rec => {
+                              const conf = Math.round(rec.confidence * 100);
+                              const cc = conf > 90 ? 'var(--grn)' : conf > 70 ? 'var(--warn)' : 'var(--red)';
+                              const tag = rec.status === 'ok' ? 't-ok' : rec.status === 'fixed' ? 't-fix' : 't-rev';
+                              const lbl = rec.status === 'ok' ? '✓ Clean' : rec.status === 'fixed' ? '⚡ Fixed' : '⚠ Review';
+                              return (
+                                <tr key={rec.id}>
+                                  <td><span className={`tag ${tag}`}>{lbl}</span></td>
+                                  {rawData.headers.map((h, i) => {
+                                    const o = rec.original[i], c = rec.cleaned[i];
+                                    return o !== c
+                                      ? <td key={h}><span className="co">{o || '∅'}</span><span className="cc">{c}</span></td>
+                                      : <td key={h}>{c || <span className="ce">∅</span>}</td>;
+                                  })}
+                                  <td>
+                                    <div className="cf">
+                                      <div className="cf-track"><div className="cf-fill" style={{ width: conf + '%', background: cc }} /></div>
+                                      <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: cc, minWidth: 30 }}>{conf}%</span>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}</tbody>
+                          </table>
+                        </div></div>
+                      )}
+                    </div>
+                  </details>
+                </>}
               </div>
             )}
 
