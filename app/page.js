@@ -9,12 +9,12 @@ const TABS = ['ingest','profile','rules','cleanse','audit','dedup','db','setup']
 const TAB_LABELS = {
   ingest:'📂 Ingest', profile:'🔍 Profile', rules:'⚙️ Rules',
   cleanse:'⚡ Cleanse', audit:'📋 Audit', dedup:'🔁 Fuzzy Dedup',
-  db:'🗄️ Database', setup:'🤖 AI Setup',
+  db:'🗄️ Database', setup:'🤖 Groq Setup',
 };
 const NAV_LABELS = {
   ingest:'📂 Ingest', profile:'🔍 Profile', rules:'⚙️ Rules',
   cleanse:'⚡ AI Cleanse', audit:'📋 Audit Log', dedup:'🔁 Fuzzy Dedup',
-  db:'🗄️ Database', setup:'🤖 AI Setup',
+  db:'🗄️ Database', setup:'🤖 Groq Setup',
 };
 
 const COUNTRY_MAP = {
@@ -22,6 +22,14 @@ const COUNTRY_MAP = {
   'united states':'United States','uk':'United Kingdom','gb':'United Kingdom',
   'au':'Australia','aus':'Australia','ca':'Canada','sg':'Singapore','uae':'UAE','ae':'UAE',
 };
+
+const GROQ_MODELS = [
+  { id: 'llama-3.3-70b-versatile', label: 'llama-3.3-70b-versatile (recommended — best quality)' },
+  { id: 'llama-3.1-8b-instant', label: 'llama-3.1-8b-instant (fastest, low latency)' },
+  { id: 'llama3-70b-8192', label: 'llama3-70b-8192 (Meta — very accurate)' },
+  { id: 'mixtral-8x7b-32768', label: 'mixtral-8x7b-32768 (large context window)' },
+  { id: 'gemma2-9b-it', label: 'gemma2-9b-it (Google — efficient)' },
+];
 
 const SAMPLES = {
   customer:{
@@ -156,9 +164,9 @@ export default function Home() {
   const [rules, setRules] = useState(DEFAULT_RULES);
   const [stats, setStats] = useState({ total: 0, issues: 0, fixed: 0, review: 0 });
   const [dqScore, setDqScore] = useState(null);
-  const [currentModel, setCurrentModel] = useState('mistral');
-  const [ollamaStatus, setOllamaStatus] = useState('checking'); // 'online'|'offline'|'checking'
-  const [ollamaModels, setOllamaModels] = useState([]);
+  const [currentModel, setCurrentModel] = useState('llama-3.3-70b-versatile');
+  const [groqStatus, setGroqStatus] = useState('checking'); // 'online'|'offline'|'no_key'|'checking'
+  const [groqModels, setGroqModels] = useState([]);
   const [profileData, setProfileData] = useState(null);
   const [cleanseBusy, setCleanseBusy] = useState(false);
   const [cleanseMsg, setCleanseMsg] = useState('');
@@ -183,35 +191,33 @@ export default function Home() {
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef(null);
 
-  useEffect(() => { checkOllama(); refreshJobs(); }, []);
+  useEffect(() => { checkGroq(); refreshJobs(); }, []);
 
-  // ── Ollama ──────────────────────────────────────────────
-  async function checkOllama() {
-    setOllamaStatus('checking');
+  // ── Groq ─────────────────────────────────────────────────
+  async function checkGroq() {
+    setGroqStatus('checking');
     try {
-      const r = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(4000) });
+      const r = await fetch('/api/groq/status');
       const d = await r.json();
-      setOllamaModels(d.models?.map(m => m.name) || []);
-      setOllamaStatus('online');
+      setGroqStatus(d.status);
+      if (d.models) setGroqModels(d.models);
     } catch {
-      setOllamaStatus('offline');
+      setGroqStatus('error');
     }
   }
 
-  async function askOllama(prompt, system = '') {
-    const full = system ? `${system}\n\n${prompt}` : prompt;
+  async function askGroq(prompt, system = '') {
     try {
-      const r = await fetch('http://localhost:11434/api/generate', {
+      const r = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: currentModel, prompt: full, stream: false, options: { temperature: 0.2, num_predict: 800 } }),
-        signal: AbortSignal.timeout(90000),
+        body: JSON.stringify({ prompt, system, model: currentModel }),
       });
       const d = await r.json();
-      return d.response || 'No response.';
+      if (!r.ok) return `Error: ${d.error || 'Groq API error.'}`;
+      return d.reply || 'No response.';
     } catch (e) {
-      if (e.name === 'TimeoutError') return 'Ollama timed out. Try a smaller model like gemma:2b.';
-      return `Ollama not reachable. Make sure it is running:\n  ollama serve\n  ollama pull ${currentModel}`;
+      return `Request failed: ${e.message}`;
     }
   }
 
@@ -318,7 +324,10 @@ export default function Home() {
     setRulesMsgs(m => [...m, { cls: 'usr', text: 'You: ' + p }, { cls: 'sys loading', text: '...' }]);
     setChatBusy(true);
     const ctx = rawData ? `Dataset headers: ${rawData.headers.join(', ')}` : '';
-    const reply = await askOllama(`${ctx ? ctx + '\n\n' : ''}Suggest data cleansing rules for: ${p}\nFormat: Field: X, Rule: Y, Action: Z`, 'You are a senior data quality engineer. Be concise and specific.');
+    const reply = await askGroq(
+      `${ctx ? ctx + '\n\n' : ''}Suggest data cleansing rules for: ${p}\nFormat: Field: X, Rule: Y, Action: Z`,
+      'You are a senior data quality engineer. Be concise and specific.'
+    );
     setRulesMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'res', text: reply }]);
     setChatBusy(false);
   }
@@ -328,17 +337,9 @@ export default function Home() {
     setCleanseInput('');
     setCleanseMsgs(m => [...m, { cls: 'usr', text: 'You: ' + p }, { cls: 'sys loading', text: '...' }]);
     setChatBusy(true);
-    try {
-      const r = await fetch('/api/assistant/ask', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: p }), signal: AbortSignal.timeout(90000),
-      });
-      const d = await r.json();
-      setCleanseMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'res', text: d.reply || 'No response.' }]);
-    } catch {
-      const reply = await askOllama(p, `You are a data quality assistant. Context: ${auditEntries.length} audit entries, ${cleanedData.length} records processed.`);
-      setCleanseMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'res', text: reply }]);
-    }
+    const ctx = `You are a data quality assistant. Context: ${auditEntries.length} audit entries, ${cleanedData.length} records processed.`;
+    const reply = await askGroq(p, ctx);
+    setCleanseMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'res', text: reply }]);
     setChatBusy(false);
   }
 
@@ -373,8 +374,8 @@ export default function Home() {
   }
 
   // ── Render ────────────────────────────────────────────────
-  const ollamaBadgeClass = ollamaStatus === 'online' ? 'b-grn' : ollamaStatus === 'offline' ? 'b-red' : 'b-warn';
-  const ollamaBadgeText = ollamaStatus === 'online' ? 'Ollama: Online' : ollamaStatus === 'offline' ? 'Ollama: Offline' : 'Ollama: Checking...';
+  const groqBadgeClass = groqStatus === 'online' ? 'b-grn' : groqStatus === 'no_key' ? 'b-red' : groqStatus === 'error' ? 'b-red' : 'b-warn';
+  const groqBadgeText = groqStatus === 'online' ? 'Groq: Online' : groqStatus === 'no_key' ? 'Groq: No API Key' : groqStatus === 'error' ? 'Groq: Error' : 'Groq: Checking...';
   const dqColor = dqScore === null ? 'var(--mut)' : dqScore >= 80 ? 'var(--grn)' : dqScore >= 60 ? 'var(--warn)' : 'var(--red)';
 
   return (
@@ -383,9 +384,9 @@ export default function Home() {
       <div className="hdr">
         <div className="logo">DataCleanse<span>AI</span></div>
         <div style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
-          <span className={`badge b-pur`}>Ollama Powered</span>
+          <span className="badge b-pur">Groq Powered</span>
           <span className="badge b-grn">BODS Alternative v1.0</span>
-          <span className={`badge ${ollamaBadgeClass}`}>{ollamaBadgeText}</span>
+          <span className={`badge ${groqBadgeClass}`}>{groqBadgeText}</span>
           <SignedOut><SignInButton mode="modal"><button className="btn btn-g btn-sm">Sign In</button></SignInButton></SignedOut>
           <SignedIn><UserButton afterSignOutUrl="/" /></SignedIn>
         </div>
@@ -419,7 +420,7 @@ export default function Home() {
 
           <div style={{ flex: 1 }} />
           <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--mut)', paddingTop: 10, borderTop: '1px solid var(--bdr)', marginTop: 10, lineHeight: 1.9 }}>
-            Model: <span style={{ color: 'var(--pur)' }}>{currentModel}</span><br />
+            Model: <span style={{ color: 'var(--pur)' }}>{currentModel.split('-').slice(0,2).join('-')}</span><br />
             Session: <span style={{ color: 'var(--txt)' }}>{sessionId()}</span>
           </div>
         </div>
@@ -449,8 +450,8 @@ export default function Home() {
               <div>
                 <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 12 }}>Load Your Data</div>
                 <div className="info">
-                  <strong>No API key needed.</strong> This tool uses Ollama running locally on your machine for AI features.
-                  Rule-based cleansing works even without Ollama. Check the AI Setup tab to configure your model.
+                  <strong>Powered by Groq.</strong> AI features use the Groq API (fast inference).
+                  Rule-based cleansing works even without an API key. Check the AI Setup tab to configure your model.
                 </div>
                 <div
                   className={`upload-zone${dragging ? ' drag' : ''}`}
@@ -557,7 +558,7 @@ export default function Home() {
                 ))}
 
                 <div className="ai-panel">
-                  <div className="ai-hdr"><span className="ai-pulse" />Ask Ollama to Generate Rules</div>
+                  <div className="ai-hdr"><span className="ai-pulse" />Ask Groq to Generate Rules</div>
                   <div className="ai-msgs">
                     {rulesMsgs.map((m, i) => <div key={i} className={`am ${m.cls}`}>{m.cls === 'sys loading' ? <span className="spin" /> : m.text}</div>)}
                   </div>
@@ -620,7 +621,7 @@ export default function Home() {
                 }
 
                 <div className="ai-panel">
-                  <div className="ai-hdr"><span className="ai-pulse" />Ollama Cleanse Assistant</div>
+                  <div className="ai-hdr"><span className="ai-pulse" />Groq Cleanse Assistant</div>
                   <div className="ai-msgs">
                     {cleanseMsgs.map((m, i) => <div key={i} className={`am ${m.cls}`}>{m.cls === 'sys loading' ? <span className="spin" /> : m.text}</div>)}
                   </div>
@@ -781,30 +782,26 @@ export default function Home() {
             {/* AI SETUP */}
             {tab === 'setup' && (
               <div>
-                <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 14 }}>AI Setup — Ollama Configuration</div>
+                <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 14 }}>AI Setup — Groq Configuration</div>
 
                 <div className="oll-card">
                   <div className="oll-row">
                     <div className="oll-title">
-                      <span className={`oll-dot ${ollamaStatus === 'online' ? 'on' : 'off'}`} />
-                      Ollama Status
+                      <span className={`oll-dot ${groqStatus === 'online' ? 'on' : 'off'}`} />
+                      Groq API Status
                     </div>
-                    <button className="btn btn-g btn-sm" onClick={checkOllama}>↺ Refresh</button>
+                    <button className="btn btn-g btn-sm" onClick={checkGroq}>↺ Refresh</button>
                   </div>
                   <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--mut)', marginBottom: 12 }}>
-                    {ollamaStatus === 'checking' && 'Checking...'}
-                    {ollamaStatus === 'online' && <span style={{ color: 'var(--grn)' }}>Connected · {ollamaModels.length} model(s): {ollamaModels.join(', ') || 'none pulled yet'}</span>}
-                    {ollamaStatus === 'offline' && <span style={{ color: 'var(--red)' }}>Not running. Start with: <code style={{ background: 'var(--surf2)', padding: '1px 6px', borderRadius: 3 }}>ollama serve</code></span>}
+                    {groqStatus === 'checking' && 'Checking...'}
+                    {groqStatus === 'online' && <span style={{ color: 'var(--grn)' }}>Connected · {groqModels.length} model(s) available</span>}
+                    {groqStatus === 'no_key' && <span style={{ color: 'var(--red)' }}>GROQ_API_KEY not set — add it to <code style={{ background: 'var(--surf2)', padding: '1px 6px', borderRadius: 3 }}>.env.local</code> and restart</span>}
+                    {groqStatus === 'error' && <span style={{ color: 'var(--red)' }}>Could not reach Groq API. Check your key and network.</span>}
                   </div>
                   <div className="inp-lbl">Active Model</div>
                   <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                     <select className="model-select" value={currentModel} onChange={e => setCurrentModel(e.target.value)}>
-                      <option value="mistral">mistral (recommended — best quality)</option>
-                      <option value="llama3">llama3 (Meta — very accurate)</option>
-                      <option value="gemma:2b">gemma:2b (Google — fastest, least RAM)</option>
-                      <option value="phi3">phi3 (Microsoft — efficient)</option>
-                      <option value="deepseek-coder">deepseek-coder (best for structured data)</option>
-                      <option value="mixtral">mixtral (large — high quality)</option>
+                      {GROQ_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
                     </select>
                   </div>
                 </div>
@@ -812,28 +809,27 @@ export default function Home() {
                 <div className="oll-card">
                   <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 12 }}>Quick Setup Guide</div>
                   <div style={{ fontFamily: 'var(--mono)', fontSize: 12, lineHeight: 2, color: 'var(--mut)' }}>
-                    <div><span style={{ color: 'var(--grn)' }}>1.</span> Download Ollama from <span style={{ color: 'var(--blu)' }}>ollama.com</span> and install</div>
-                    <div><span style={{ color: 'var(--grn)' }}>2.</span> Open a terminal and run: <code style={{ background: 'var(--surf2)', padding: '1px 6px', borderRadius: 3, color: 'var(--txt)' }}>ollama serve</code></div>
-                    <div><span style={{ color: 'var(--grn)' }}>3.</span> Pull a model: <code style={{ background: 'var(--surf2)', padding: '1px 6px', borderRadius: 3, color: 'var(--txt)' }}>ollama pull mistral</code></div>
-                    <div><span style={{ color: 'var(--grn)' }}>4.</span> Come back here and click Refresh above</div>
-                    <div style={{ marginTop: 10, color: 'var(--warn)' }}>Note: First model pull is ~4GB. After that, instant.</div>
+                    <div><span style={{ color: 'var(--grn)' }}>1.</span> Sign up at <span style={{ color: 'var(--blu)' }}>console.groq.com</span> (free)</div>
+                    <div><span style={{ color: 'var(--grn)' }}>2.</span> Create an API key under API Keys</div>
+                    <div><span style={{ color: 'var(--grn)' }}>3.</span> Add to your project: <code style={{ background: 'var(--surf2)', padding: '1px 6px', borderRadius: 3, color: 'var(--txt)' }}>GROQ_API_KEY=gsk_...</code> in <code style={{ background: 'var(--surf2)', padding: '1px 6px', borderRadius: 3, color: 'var(--txt)' }}>.env.local</code></div>
+                    <div><span style={{ color: 'var(--grn)' }}>4.</span> Restart the dev server and click Refresh above</div>
+                    <div style={{ marginTop: 10, color: 'var(--warn)' }}>Note: Groq free tier is generous — no credit card needed to get started.</div>
                   </div>
                 </div>
 
                 <div className="oll-card">
                   <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 10 }}>Model Comparison</div>
                   <table className="tbl" style={{ fontSize: 11 }}>
-                    <thead><tr><th>Model</th><th>Size</th><th>RAM</th><th>Speed</th><th>Best For</th></tr></thead>
+                    <thead><tr><th>Model</th><th>Context</th><th>Speed</th><th>Best For</th></tr></thead>
                     <tbody>
                       {[
-                        ['mistral ★','4 GB','8 GB','Fast','General cleansing','var(--grn)'],
-                        ['llama3','4 GB','8 GB','Medium','Complex fixes',''],
-                        ['gemma:2b','1.5 GB','4 GB','Fastest','Low-RAM machines',''],
-                        ['phi3','2 GB','4 GB','Fast','Efficient, good quality',''],
-                        ['deepseek-coder','4 GB','8 GB','Medium','Structured/JSON data',''],
-                        ['mixtral','26 GB','32 GB','Slow','Highest accuracy',''],
-                      ].map(([name,size,ram,speed,best,color]) => (
-                        <tr key={name}><td style={color?{color}:{}}>{name}</td><td>{size}</td><td>{ram}</td><td>{speed}</td><td>{best}</td></tr>
+                        ['llama-3.3-70b-versatile ★','128k','Fast','General cleansing (recommended)','var(--grn)'],
+                        ['llama-3.1-8b-instant','128k','Fastest','Low-latency tasks'],
+                        ['llama3-70b-8192','8k','Fast','Complex reasoning'],
+                        ['mixtral-8x7b-32768','32k','Fast','Large context tasks'],
+                        ['gemma2-9b-it','8k','Very fast','Efficient, good quality'],
+                      ].map(([name, ctx, speed, best, color]) => (
+                        <tr key={name}><td style={color ? { color } : {}}>{name}</td><td>{ctx}</td><td>{speed}</td><td>{best}</td></tr>
                       ))}
                     </tbody>
                   </table>
