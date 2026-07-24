@@ -26,3 +26,16 @@ create index if not exists jobs_user_id_idx on jobs (user_id, created_at desc);
 -- the API routes themselves (checking the signed-in Clerk user), not in
 -- Postgres policies. If you later add direct client-side Supabase access,
 -- you'd need to enable RLS and write real policies at that point.
+
+create table if not exists rules (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null,
+  field text not null,
+  type text not null,
+  action text not null default 'custom',
+  expression text,
+  description text,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create index if not exists rules_user_id_idx on rules (user_id, created_at);

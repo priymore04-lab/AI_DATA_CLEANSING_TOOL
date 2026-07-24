@@ -67,7 +67,7 @@ const DEFAULT_RULES = [];
 
 const ACTIONS = ['trim','title_case','upper_case','lower_case','validate_email',
   'normalize_phone','std_country','title_case_city','std_state_code','fix_date',
-  'normalize_currency','normalize_decimal','remove_special'];
+  'normalize_currency','normalize_decimal','remove_special','custom'];
 
 // applyAction and COUNTRY_MAP imported from @/lib/agentTools
 
@@ -133,6 +133,7 @@ export default function Home() {
   const [cleanedData, setCleanedData] = useState([]);
   const [auditEntries, setAuditEntries] = useState([]);
   const [rules, setRules] = useState(DEFAULT_RULES);
+  const [rulesLoading, setRulesLoading] = useState(true);
   const [stats, setStats] = useState({ total: 0, issues: 0, fixed: 0, review: 0 });
   const [dqScore, setDqScore] = useState(null);
   const [currentModel, setCurrentModel] = useState('llama-3.3-70b-versatile');
@@ -165,7 +166,7 @@ export default function Home() {
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef(null);
 
-  useEffect(() => { checkGroq(); refreshJobs(); }, []);
+  useEffect(() => { checkGroq(); refreshJobs(); loadRules(); }, []);
 
   // ── Groq ─────────────────────────────────────────────────
   async function checkGroq() {
@@ -303,22 +304,28 @@ export default function Home() {
     setChatBusy(true);
 
     const ctx = rawData ? `Available columns: ${rawData.headers.join(', ')}.` : '';
-    const system = `You are a data quality engineer. Given a user request, output ONLY a JSON array of cleansing rules — no explanation, no markdown, no extra text. Each rule has: field (column name), type (short label), action (one of: trim, title_case, upper_case, lower_case, validate_email, normalize_phone, std_country, title_case_city, std_state_code, fix_date, normalize_currency, normalize_decimal, remove_special). Example: [{"field":"Name","type":"Title Case","action":"title_case"},{"field":"Email","type":"Normalize Email","action":"validate_email"}]`;
+    const system = `You are a data quality engineer. Output ONLY a JSON array. Each item: {"field":"column name","type":"short label","action":"one of: trim|title_case|upper_case|lower_case|validate_email|normalize_phone|std_country|title_case_city|std_state_code|normalize_currency|normalize_decimal|remove_special|custom","expression":"JS expr using value (only when action is custom)","description":"what it does"}. Use custom+expression for anything not covered by predefined actions.`;
 
-    const reply = await askGroq(
-      `${ctx ? ctx + '\n' : ''}Create cleansing rules for: ${p}`,
-      system
-    );
+    const reply = await askGroq(`${ctx ? ctx + '\n' : ''}Create cleansing rules for: ${p}`, system);
 
     try {
       const jsonMatch = reply.match(/\[[\s\S]*\]/);
       if (!jsonMatch) throw new Error('No JSON array found');
       const parsed = JSON.parse(jsonMatch[0]);
-      const newRules = parsed.map(r => ({ id: Date.now() + Math.random(), field: r.field || '', type: r.type || r.action, action: r.action || 'trim', active: true }));
-      setRules(existing => [...existing, ...newRules]);
-      setRulesMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'res', text: `✓ Added ${newRules.length} rule(s): ${newRules.map(r => `${r.field} → ${r.action}`).join(', ')}` }]);
-    } catch {
-      setRulesMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'err', text: `Could not parse rules from response. Raw: ${reply.slice(0, 200)}` }]);
+
+      const saved = [];
+      for (const rule of parsed) {
+        const r = await fetch('/api/rules', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ field: rule.field || '', type: rule.type || rule.action, action: rule.action || 'custom', expression: rule.expression || '', description: rule.description || '', active: true }),
+        });
+        const d = await r.json();
+        if (r.ok) saved.push(d.rule);
+      }
+      setRules(existing => [...existing, ...saved]);
+      setRulesMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'res', text: `✓ Added ${saved.length} rule(s) to your ruleset: ${saved.map(r => `${r.field} → ${r.action}`).join(', ')}` }]);
+    } catch (e) {
+      setRulesMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'err', text: `Failed to parse rules: ${e.message}` }]);
     }
     setChatBusy(false);
   }
@@ -398,6 +405,39 @@ export default function Home() {
       setDedupMsg(`Found ${pairs.length} duplicate pair(s)`);
       setDedupBusy(false);
     }, 300);
+  }
+
+  // ── Rules (DB-backed) ─────────────────────────────────────
+  async function loadRules() {
+    setRulesLoading(true);
+    try {
+      const r = await fetch('/api/rules');
+      const d = await r.json();
+      if (r.ok) setRules(d.rules || []);
+    } catch {}
+    setRulesLoading(false);
+  }
+
+  async function addRule() {
+    const r = await fetch('/api/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ field: 'Field', type: 'New Rule', action: 'trim', active: true, expression: '', description: '' }) });
+    const d = await r.json();
+    if (r.ok) setRules(rs => [...rs, d.rule]);
+  }
+
+  async function deleteRule(id) {
+    await fetch(`/api/rules/${id}`, { method: 'DELETE' });
+    setRules(rs => rs.filter(x => x.id !== id));
+  }
+
+  async function toggleRule(id, active) {
+    setRules(rs => rs.map(x => x.id === id ? { ...x, active } : x)); // optimistic
+    await fetch(`/api/rules/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }) });
+  }
+
+  async function resetRules() {
+    if (!confirm('Delete all your saved rules? This cannot be undone.')) return;
+    await Promise.all(rules.map(r => fetch(`/api/rules/${r.id}`, { method: 'DELETE' })));
+    setRules([]);
   }
 
   // ── Jobs ─────────────────────────────────────────────────
@@ -553,38 +593,53 @@ export default function Home() {
               <div>
                 <div className="flex-row">
                   <span style={{ fontSize: 13, fontWeight: 800 }}>Cleansing Rules</span>
-                  <button className="btn btn-p btn-sm" onClick={() => setRules(r => [...r, { id: Date.now(), field: 'Field', type: 'New Rule', action: 'trim', active: true }])}>+ Add Rule</button>
-                  <button className="btn btn-g btn-sm" onClick={() => setRules(JSON.parse(JSON.stringify(DEFAULT_RULES)))}>↺ Reset</button>
+                  <button className="btn btn-p btn-sm" onClick={addRule}>+ Add Rule</button>
+                  <button className="btn btn-g btn-sm" onClick={resetRules}>↺ Reset</button>
                 </div>
-                {rules.length === 0 && <div className="info">No rules. Add one or ask Ollama.</div>}
+                {rulesLoading && <div className="info"><span className="spin" /> Loading your rules...</div>}
+                {!rulesLoading && rules.length === 0 && <div className="info">No rules. Add one or ask Groq.</div>}
                 {rules.map(r => (
                   <div className="rc" key={r.id}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontWeight: 800, fontSize: 13 }}>{r.type}</span>
                       <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
                         <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', color: 'var(--mut)' }}>
-                          <input type="checkbox" checked={r.active} onChange={e => setRules(rs => rs.map(x => x.id === r.id ? { ...x, active: e.target.checked } : x))} /> Active
+                          <input type="checkbox" checked={r.active} onChange={e => toggleRule(r.id, e.target.checked)} /> Active
                         </label>
-                        <button className="btn btn-d btn-sm" onClick={() => setRules(rs => rs.filter(x => x.id !== r.id))}>✕</button>
+                        <button className="btn btn-d btn-sm" onClick={() => deleteRule(r.id)}>✕</button>
                       </div>
                     </div>
                     <div className="rr">
                       <div>
                         <div className="inp-lbl">Field</div>
-                        <input className="inp" value={r.field} onChange={e => setRules(rs => rs.map(x => x.id === r.id ? { ...x, field: e.target.value } : x))} />
+                        <input className="inp" value={r.field} onChange={e => setRules(rs => rs.map(x => x.id === r.id ? { ...x, field: e.target.value } : x))} onBlur={async (e) => { await fetch(`/api/rules/${r.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ field: r.field }) }); }} />
                       </div>
                       <div>
                         <div className="inp-lbl">Rule Type</div>
-                        <input className="inp" value={r.type} onChange={e => setRules(rs => rs.map(x => x.id === r.id ? { ...x, type: e.target.value } : x))} />
+                        <input className="inp" value={r.type} onChange={e => setRules(rs => rs.map(x => x.id === r.id ? { ...x, type: e.target.value } : x))} onBlur={async (e) => { await fetch(`/api/rules/${r.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: r.type }) }); }} />
                       </div>
                       <div>
                         <div className="inp-lbl">Action</div>
-                        <select className="inp" value={r.action} onChange={e => setRules(rs => rs.map(x => x.id === r.id ? { ...x, action: e.target.value } : x))}>
+                        <select className="inp" value={r.action} onChange={e => setRules(rs => rs.map(x => x.id === r.id ? { ...x, action: e.target.value } : x))} onBlur={async (e) => { await fetch(`/api/rules/${r.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: r.action }) }); }}>
                           {ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
                         </select>
                       </div>
                       <span className={`tag ${r.active ? 't-ok' : 't-warn'}`}>{r.active ? 'ON' : 'OFF'}</span>
                     </div>
+                    {r.action === 'custom' && (
+                      <div style={{ marginTop: 8 }}>
+                        <div className="inp-lbl">JS Expression <span style={{color:'var(--mut)',fontWeight:400}}>— use `value` as the cell string</span></div>
+                        <textarea
+                          className="inp"
+                          rows={2}
+                          style={{ width: '100%', resize: 'vertical', marginTop: 3 }}
+                          placeholder="e.g. value.replace(/\\D+/g, '').slice(-10)"
+                          value={r.expression || ''}
+                          onChange={e => setRules(rs => rs.map(x => x.id === r.id ? { ...x, expression: e.target.value } : x))}
+                          onBlur={async (e) => { await fetch(`/api/rules/${r.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expression: e.target.value }) }); }}
+                        />
+                      </div>
+                    )}
                   </div>
                 ))}
 
