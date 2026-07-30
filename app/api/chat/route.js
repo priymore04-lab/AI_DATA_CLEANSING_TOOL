@@ -4,12 +4,13 @@ export async function POST(req) {
   const { userId } = await auth();
   if (!userId) return Response.json({ error: 'Not signed in.' }, { status: 401 });
 
-  const { prompt, system, model } = await req.json();
+  const { prompt, system, model, history } = await req.json();
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) return Response.json({ error: 'GROQ_API_KEY is not set on the server.' }, { status: 500 });
 
   const messages = [];
   if (system) messages.push({ role: 'system', content: system });
+  if (Array.isArray(history)) messages.push(...history);
   messages.push({ role: 'user', content: prompt });
 
   try {

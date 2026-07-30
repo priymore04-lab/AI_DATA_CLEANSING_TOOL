@@ -166,8 +166,10 @@ export default function Home() {
   const [guideVotes, setGuideVotes] = useState({});
 
   // AI chat
-  const [rulesMsgs, setRulesMsgs] = useState([{ cls: 'sys', text: 'Tell me what rules to create — e.g. "add rules for name, email and phone" — and I\'ll add them to the list above.' }]);
+  const [rulesMsgs, setRulesMsgs] = useState([{ cls: 'sys', text: 'Click "Analyze Data & Suggest Rules" and I\'ll look at your columns and propose a rule set — or just tell me what to add, e.g. "add rules for name, email and phone".' }]);
   const [rulesInput, setRulesInput] = useState('');
+  const [rulesHistory, setRulesHistory] = useState([]);
+  const [pendingRuleSuggestions, setPendingRuleSuggestions] = useState(null);
   const [cleanseMsgs, setCleanseMsgs] = useState([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
   const [cleanseInput, setCleanseInput] = useState('');
   const [agentHistory, setAgentHistory] = useState([]);
@@ -216,12 +218,12 @@ export default function Home() {
     }
   }
 
-  async function askGroq(prompt, system = '') {
+  async function askGroq(prompt, system = '', history = []) {
     try {
       const r = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, system, model: currentModel }),
+        body: JSON.stringify({ prompt, system, model: currentModel, history }),
       });
       const d = await r.json();
       if (!r.ok) return `Error: ${d.error || 'Groq API error.'}`;
@@ -241,6 +243,8 @@ export default function Home() {
     setCleanedData([]); setAuditEntries([]); setDqScore(null);
     setAgentHistory([]);
     setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
+    setRulesHistory([]); setPendingRuleSuggestions(null);
+    setRulesMsgs([{ cls: 'sys', text: 'Click "Analyze Data & Suggest Rules" and I\'ll look at your columns and propose a rule set — or just tell me what to add, e.g. "add rules for name, email and phone".' }]);
     setTab('ingest');
   }
 
@@ -257,6 +261,8 @@ export default function Home() {
         setCleanedData([]); setAuditEntries([]); setDqScore(null);
         setAgentHistory([]);
         setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
+        setRulesHistory([]); setPendingRuleSuggestions(null);
+        setRulesMsgs([{ cls: 'sys', text: 'Click "Analyze Data & Suggest Rules" and I\'ll look at your columns and propose a rule set — or just tell me what to add, e.g. "add rules for name, email and phone".' }]);
       },
     });
   }
@@ -334,36 +340,94 @@ export default function Home() {
   }
 
   // ── AI chat ──────────────────────────────────────────────
-  async function aiRules() {
-    const p = rulesInput.trim(); if (!p) return;
+  const CONFIRM_RE = /^(yes|yeah|yep|yup|sure|ok(ay)?|go ahead|confirm(ed)?|add (them|it|these|all)?|apply( them)?|do it|proceed|sounds good|please do)\b/i;
+  const CANCEL_RE = /^(no|nah|nope|cancel|skip|discard|never ?mind|stop|don'?t)\b/i;
+
+  function columnProfileContext() {
+    if (!rawData) return 'No dataset loaded yet — ask the user to load one, or suggest generic best-practice rules by column name alone.';
+    const { headers, rows } = rawData;
+    return headers.map((h, i) => {
+      const vals = [...new Set(rows.map(r => r[i]).filter(v => v))].slice(0, 5);
+      const missing = rows.filter(r => !r[i]).length;
+      return `- ${h}: sample=[${vals.join(' | ')}], missing=${missing}/${rows.length}`;
+    }).join('\n');
+  }
+
+  async function saveSuggestedRules(toAdd) {
+    setChatBusy(true);
+    const saved = [];
+    for (const rule of toAdd) {
+      const r = await fetch('/api/rules', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field: rule.field || '', type: rule.type || rule.action, action: rule.action || 'custom', expression: rule.expression || '', description: rule.description || '', active: true }),
+      });
+      const d = await r.json();
+      if (r.ok) saved.push(d.rule);
+    }
+    setRules(existing => [...existing, ...saved]);
+    setPendingRuleSuggestions(null);
+    setRulesMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'res', text: `✓ Added ${saved.length} rule(s): ${saved.map(r => `${r.field} → ${r.action}`).join(', ')}. I'll remember these are already covered next time you ask.` }]);
+    setChatBusy(false);
+  }
+
+  function analyzeAndSuggestRules() {
+    setRulesInput('Analyze my data and suggest cleansing rules');
+    setTimeout(() => aiRules('Analyze my data and suggest cleansing rules'), 0);
+  }
+
+  async function aiRules(forcedInput) {
+    const p = (forcedInput ?? rulesInput).trim(); if (!p) return;
     setRulesInput('');
-    setRulesMsgs(m => [...m, { cls: 'usr', text: p }, { cls: 'sys loading', text: '...' }]);
+    setRulesMsgs(m => [...m, { cls: 'usr', text: p }]);
+
+    // Confirming or cancelling a pending proposal never needs another LLM round-trip.
+    if (pendingRuleSuggestions && CONFIRM_RE.test(p)) {
+      setRulesMsgs(m => [...m, { cls: 'sys loading', text: '...' }]);
+      await saveSuggestedRules(pendingRuleSuggestions);
+      return;
+    }
+    if (pendingRuleSuggestions && CANCEL_RE.test(p)) {
+      setPendingRuleSuggestions(null);
+      setRulesMsgs(m => [...m, { cls: 'res', text: 'Okay, discarded those suggestions — tell me if you\'d like something different.' }]);
+      return;
+    }
+
+    setRulesMsgs(m => [...m, { cls: 'sys loading', text: '...' }]);
     setChatBusy(true);
 
-    const ctx = rawData ? `Available columns: ${rawData.headers.join(', ')}.` : '';
-    const system = `You are a data quality engineer. Output ONLY a JSON array. Each item: {"field":"column name","type":"short label","action":"one of: trim|title_case|upper_case|lower_case|validate_email|normalize_phone|std_country|title_case_city|std_state_code|normalize_currency|normalize_decimal|remove_special|custom","expression":"JS expr using value (only when action is custom)","description":"what it does"}. Use custom+expression for anything not covered by predefined actions.`;
+    const activeRules = rules.filter(r => r.active);
+    const memoryCtx = activeRules.length
+      ? `Rules already active for this user (skip these columns unless asked to change them): ${activeRules.map(r => `${r.field}→${r.action}`).join(', ')}`
+      : 'No rules exist yet for this user.';
 
-    const reply = await askGroq(`${ctx ? ctx + '\n' : ''}Create cleansing rules for: ${p}`, system);
+    const system = `You are a data quality engineer helping build a cleansing rule set for this dataset, working conversationally — never add rules without the user's confirmation.
 
-    try {
-      const jsonMatch = reply.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) throw new Error('No JSON array found');
-      const parsed = JSON.parse(jsonMatch[0]);
+Dataset columns:
+${columnProfileContext()}
 
-      const saved = [];
-      for (const rule of parsed) {
-        const r = await fetch('/api/rules', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ field: rule.field || '', type: rule.type || rule.action, action: rule.action || 'custom', expression: rule.expression || '', description: rule.description || '', active: true }),
-        });
-        const d = await r.json();
-        if (r.ok) saved.push(d.rule);
-      }
-      setRules(existing => [...existing, ...saved]);
-      setRulesMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'res', text: `✓ Added ${saved.length} rule(s) to your ruleset: ${saved.map(r => `${r.field} → ${r.action}`).join(', ')}` }]);
-    } catch (e) {
-      setRulesMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'err', text: `Failed to parse rules: ${e.message}` }]);
+${memoryCtx}
+
+When the user asks you to analyze the data or suggest rules:
+1. Write a short, plain-English analysis: for each column that needs a rule, name the issue you see in the sample values (e.g. inconsistent casing, invalid emails, mixed country names, extra whitespace) and the rule you'd apply.
+2. Skip columns that already have an active rule covering the same fix, unless the user asks otherwise.
+3. End by asking the user to confirm before you add anything.
+4. After the plain-English part, on its own line, output a fenced code block starting with \`\`\`json containing ONLY a JSON array of the rules you're proposing, one object per rule: {"field":"column name","type":"short label","action":"one of trim|title_case|upper_case|lower_case|validate_email|normalize_phone|std_country|title_case_city|std_state_code|normalize_currency|normalize_decimal|remove_special|custom","expression":"JS expression using value, only when action is custom","description":"what it does and why"}. Always include this block whenever you're proposing new rules.
+5. If you're not proposing any rules (just answering a question, or nothing needs fixing), omit the JSON block entirely.
+Keep the plain-English part concise — a few sentences or a short bullet list, never restate the JSON in prose.`;
+
+    const reply = await askGroq(p, system, rulesHistory);
+    setRulesHistory(h => [...h, { role: 'user', content: p }, { role: 'assistant', content: reply }]);
+
+    const jsonMatch = reply.match(/```json\s*([\s\S]*?)```/) || reply.match(/(\[[\s\S]*\])/);
+    const displayText = reply.replace(/```json[\s\S]*?```/, '').trim();
+
+    let suggestions = null;
+    if (jsonMatch) {
+      try { suggestions = JSON.parse(jsonMatch[1]); } catch { suggestions = null; }
     }
+    setPendingRuleSuggestions(suggestions && suggestions.length ? suggestions : null);
+
+    setRulesMsgs(m => [...m.filter(x => x.cls !== 'sys loading'), { cls: 'res', text: displayText || reply }]);
     setChatBusy(false);
   }
 
@@ -748,14 +812,26 @@ export default function Home() {
                 ))}
 
                 <div className="ai-panel">
-                  <div className="ai-hdr"><span className="ai-pulse" />Ask Groq to Generate Rules</div>
+                  <div className="ai-hdr"><span className="ai-pulse" />AI Rule Advisor</div>
+                  <div className="flex-row" style={{ marginBottom: 8 }}>
+                    <button className="btn btn-p btn-sm" onClick={analyzeAndSuggestRules} disabled={chatBusy || !rawData}>🔍 Analyze Data &amp; Suggest Rules</button>
+                    {!rawData && <span style={{ fontSize: 11, color: 'var(--mut)' }}>Load a dataset first so I can look at real columns.</span>}
+                  </div>
                   <div className="ai-msgs">
                     {rulesMsgs.map((m, i) => <div key={i} className={`am ${m.cls}`}>{m.cls === 'sys loading' ? <span className="spin" /> : m.text}</div>)}
                   </div>
+                  {pendingRuleSuggestions && (
+                    <div className="flex-row" style={{ marginTop: 4, marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, color: 'var(--mut)' }}>{pendingRuleSuggestions.length} rule(s) proposed —</span>
+                      <button className="btn btn-p btn-sm" onClick={() => saveSuggestedRules(pendingRuleSuggestions)} disabled={chatBusy}>✓ Confirm &amp; Add</button>
+                      <button className="btn btn-g btn-sm" onClick={() => { setPendingRuleSuggestions(null); setRulesMsgs(m => [...m, { cls: 'res', text: 'Okay, discarded those suggestions.' }]); }} disabled={chatBusy}>✕ Discard</button>
+                    </div>
+                  )}
                   <div className="ai-inp-row">
-                    <input className="ai-inp" value={rulesInput} placeholder='e.g. "add rules for name, email and phone columns"'
+                    <input className="ai-inp" value={rulesInput}
+                      placeholder={pendingRuleSuggestions ? 'yes to confirm, no to discard, or refine your ask...' : 'e.g. "add rules for name, email and phone columns"'}
                       onChange={e => setRulesInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && !chatBusy && aiRules()} />
-                    <button className="btn btn-p btn-sm" onClick={aiRules} disabled={chatBusy}>Ask</button>
+                    <button className="btn btn-p btn-sm" onClick={() => aiRules()} disabled={chatBusy}>Ask</button>
                   </div>
                 </div>
               </div>
