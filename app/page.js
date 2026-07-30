@@ -6,17 +6,36 @@ import Papa from 'papaparse';
 import { applyAction, COUNTRY_MAP } from '@/lib/agentTools';
 
 // ── Constants ────────────────────────────────────────────
-const TABS = ['ingest','profile','rules','cleanse','audit','dedup','db','setup'];
+const TABS = ['guides','ingest','profile','rules','cleanse','audit','dedup','db','setup'];
 const TAB_LABELS = {
-  ingest:'📂 Ingest', profile:'🔍 Profile', rules:'⚙️ Rules',
+  guides:'📖 Guides', ingest:'📂 Ingest', profile:'🔍 Profile', rules:'⚙️ Rules',
   cleanse:'⚡ Cleanse', audit:'📋 Audit', dedup:'🔁 Fuzzy Dedup',
   db:'🗄️ Database', setup:'🤖 Groq Setup',
 };
 const NAV_LABELS = {
-  ingest:'📂 Ingest', profile:'🔍 Profile', rules:'⚙️ Rules',
+  guides:'📖 Guides', ingest:'📂 Ingest', profile:'🔍 Profile', rules:'⚙️ Rules',
   cleanse:'⚡ AI Cleanse', audit:'📋 Audit Log', dedup:'🔁 Fuzzy Dedup',
   db:'🗄️ Database', setup:'🤖 Groq Setup',
 };
+
+const GUIDES = [
+  { id:'ingest', tab:'ingest', icon:'📂', title:'Loading Your Data', level:'Beginner', duration:'3 min',
+    desc:'Drag and drop a CSV, Excel, or JSON file — or start instantly with a built-in Customer, Product, or Address sample dataset. Your raw data lands in a live preview table ready for profiling.' },
+  { id:'profile', tab:'profile', icon:'🔍', title:'Profiling Data Quality', level:'Beginner', duration:'2 min',
+    desc:'Run an automatic scan across every column to see fill rate, empty cells, uniqueness, and flagged issues like invalid emails or mixed casing before you clean anything.' },
+  { id:'rules', tab:'rules', icon:'⚙️', title:'Building Cleansing Rules', level:'Intermediate', duration:'5 min',
+    desc:'Create field-level rules — trim, case conversion, phone/email/country normalization, or custom JS expressions — manually or by asking Groq to generate a rule set from a plain-English request.' },
+  { id:'cleanse', tab:'cleanse', icon:'⚡', title:'AI Cleanse Agent', level:'Intermediate', duration:'6 min',
+    desc:'Chat with the Groq-powered agent to fix data in plain English — "title case the Name column", "remove duplicates" — then layer optional rule-based cleansing on top and export the result.' },
+  { id:'audit', tab:'audit', icon:'📋', title:'Reading the Audit Trail', level:'Beginner', duration:'2 min',
+    desc:'Every change and flagged issue is logged with a timestamp, field, before/after value, and confidence score so you can trace exactly what the pipeline changed and why.' },
+  { id:'dedup', tab:'dedup', icon:'🔁', title:'Fuzzy Duplicate Detection', level:'Intermediate', duration:'4 min',
+    desc:'Pick which columns to compare, choose Levenshtein, token, or combined similarity, and set a threshold to surface near-duplicate records that exact matching would miss.' },
+  { id:'db', tab:'db', icon:'🗄️', title:'Job History', level:'Beginner', duration:'1 min',
+    desc:'Every saved cleanse job is stored to your account with row counts and status, so you can revisit or re-download results from past runs.' },
+  { id:'setup', tab:'setup', icon:'🤖', title:'Configuring Groq', level:'Beginner', duration:'3 min',
+    desc:'Connect your free Groq API key, pick a model based on speed vs. context needs, and set domain context so the AI agent follows your field-specific rules automatically.' },
+];
 
 const GROQ_MODELS = [
   { id: 'llama-3.3-70b-versatile', label: 'llama-3.3-70b-versatile (recommended — best quality)' },
@@ -144,6 +163,7 @@ export default function Home() {
   const [cleanseBusy, setCleanseBusy] = useState(false);
   const [cleanseMsg, setCleanseMsg] = useState('');
   const [pastJobs, setPastJobs] = useState([]);
+  const [guideVotes, setGuideVotes] = useState({});
 
   // AI chat
   const [rulesMsgs, setRulesMsgs] = useState([{ cls: 'sys', text: 'Tell me what rules to create — e.g. "add rules for name, email and phone" — and I\'ll add them to the list above.' }]);
@@ -166,7 +186,19 @@ export default function Home() {
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef(null);
 
-  useEffect(() => { checkGroq(); refreshJobs(); loadRules(); }, []);
+  useEffect(() => {
+    checkGroq(); refreshJobs(); loadRules();
+    try { setGuideVotes(JSON.parse(localStorage.getItem('dcai_guide_votes') || '{}')); } catch {}
+  }, []);
+
+  function voteGuide(id, dir) {
+    setGuideVotes(v => {
+      const cur = v[id] || { up: 0, down: 0 };
+      const next = { ...v, [id]: { ...cur, [dir]: cur[dir] + 1 } };
+      try { localStorage.setItem('dcai_guide_votes', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }
 
   // ── Groq ─────────────────────────────────────────────────
   async function checkGroq() {
@@ -516,6 +548,41 @@ export default function Home() {
           </div>
 
           <div className="content">
+            {/* GUIDES */}
+            {tab === 'guides' && (
+              <div>
+                <div className="flex-row">
+                  <span style={{ fontSize: 13, fontWeight: 800 }}>Getting Started Guides</span>
+                  <span style={{ fontSize: 11, color: 'var(--mut)', fontFamily: 'var(--mono)' }}>{GUIDES.length} GUIDES</span>
+                </div>
+                <div className="gd-grid">
+                  {GUIDES.map(g => {
+                    const votes = guideVotes[g.id] || { up: 0, down: 0 };
+                    return (
+                      <div className="gd-card" key={g.id}>
+                        <div className="gd-top">
+                          <div className="gd-icon">{g.icon}</div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div className="gd-title">{g.title}</div>
+                            <div className="gd-author">by DataCleanseAI Team</div>
+                          </div>
+                        </div>
+                        <div className="gd-desc">{g.desc}</div>
+                        <div className="gd-foot">
+                          <button className="gd-play" title="Open this section" onClick={() => { setTab(g.tab); if (g.tab === 'profile' && rawData) runProfile(); }}>▶</button>
+                          <button className="gd-vote" onClick={() => voteGuide(g.id, 'up')}>👍 {votes.up}</button>
+                          <button className="gd-vote" onClick={() => voteGuide(g.id, 'down')}>👎 {votes.down}</button>
+                          <span style={{ flex: 1 }} />
+                          <span className={`tag ${g.level === 'Beginner' ? 't-ok' : 't-warn'}`}>{g.level}</span>
+                          <span className="gd-dur">{g.duration}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* INGEST */}
             {tab === 'ingest' && (
               <div>

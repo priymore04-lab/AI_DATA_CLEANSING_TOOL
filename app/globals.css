@@ -137,6 +137,22 @@ body{background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:14p
 .lc{font-family:var(--mono);font-size:11px;color:var(--mut);margin-top:2px}
 .la{color:var(--grn);margin:0 4px}
 
+/* Guides */
+.gd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.gd-card{background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;transition:border-color .15s}
+.gd-card:hover{border-color:#00e5a040}
+.gd-top{display:flex;gap:10px;align-items:flex-start}
+.gd-icon{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,var(--pur),var(--grn));display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0}
+.gd-title{font-weight:800;font-size:13px;line-height:1.3}
+.gd-author{font-family:var(--mono);font-size:10px;color:var(--mut);margin-top:2px}
+.gd-desc{font-size:12px;color:var(--mut);line-height:1.6;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.gd-foot{display:flex;align-items:center;gap:8px}
+.gd-play{width:26px;height:26px;border-radius:50%;border:1px solid var(--bdr);background:var(--surf2);color:var(--grn);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0}
+.gd-play:hover{border-color:var(--grn)}
+.gd-vote{background:none;border:none;color:var(--mut);font-family:var(--mono);font-size:11px;cursor:pointer;padding:2px 4px;display:flex;align-items:center;gap:3px}
+.gd-vote:hover{color:var(--txt)}
+.gd-dur{font-family:var(--mono);font-size:10px;color:var(--mut)}
+
 /* Misc */
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--bdr);border-top-color:var(--grn);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle}
 @keyframes spin{to{transform:rotate(360deg)}}
