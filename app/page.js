@@ -168,7 +168,7 @@ export default function Home() {
   // AI chat
   const [rulesMsgs, setRulesMsgs] = useState([{ cls: 'sys', text: 'Tell me what rules to create — e.g. "add rules for name, email and phone" — and I\'ll add them to the list above.' }]);
   const [rulesInput, setRulesInput] = useState('');
-  const [cleanseMsgs, setCleanseMsgs] = useState([{ cls: 'sys', text: 'Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]);
+  const [cleanseMsgs, setCleanseMsgs] = useState([{ cls: 'sys', text: 'Hi, I\'m your AI Cleansing Agent 👋 Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]);
   const [cleanseInput, setCleanseInput] = useState('');
   const [agentHistory, setAgentHistory] = useState([]);
   const [chatBusy, setChatBusy] = useState(false);
@@ -236,7 +236,7 @@ export default function Home() {
     setDedupCols(s.headers.map(() => false));
     setCleanedData([]); setAuditEntries([]); setDqScore(null);
     setAgentHistory([]);
-    setCleanseMsgs([{ cls: 'sys', text: 'Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]);
+    setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI Cleansing Agent 👋 Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]);
     setTab('ingest');
   }
 
@@ -251,7 +251,7 @@ export default function Home() {
         setDedupCols(headers.map(() => false));
         setCleanedData([]); setAuditEntries([]); setDqScore(null);
         setAgentHistory([]);
-        setCleanseMsgs([{ cls: 'sys', text: 'Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]);
+        setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI Cleansing Agent 👋 Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]);
       },
     });
   }
@@ -760,7 +760,7 @@ export default function Home() {
                       <span style={{ fontSize: 11, color: 'var(--mut)', fontFamily: 'var(--mono)' }}>{rawData.rows.length} rows · {rawData.headers.length} cols</span>
                       <button className="btn btn-g btn-sm" onClick={() => { const csv = Papa.unparse({ fields: rawData.headers, data: rawData.rows }); download(csv, 'data.csv'); }}>↓ Download CSV</button>
                       {agentHistory.length > 0 && (
-                        <button className="btn btn-d btn-sm" onClick={() => { setAgentHistory([]); setCleanseMsgs([{ cls: 'sys', text: 'Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]); }}>
+                        <button className="btn btn-d btn-sm" onClick={() => { setAgentHistory([]); setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI Cleansing Agent 👋 Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]); }}>
                           ↺ Reset chat
                         </button>
                       )}
