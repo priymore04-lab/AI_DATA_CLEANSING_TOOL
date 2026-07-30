@@ -30,7 +30,7 @@ const GUIDES = [
   { id:'audit', tab:'audit', icon:'📋', title:'Reading the Audit Trail', level:'Beginner', duration:'2 min',
     desc:'Every change and flagged issue is logged with a timestamp, field, before/after value, and confidence score so you can trace exactly what the pipeline changed and why.' },
   { id:'dedup', tab:'dedup', icon:'🔁', title:'Fuzzy Duplicate Detection', level:'Intermediate', duration:'4 min',
-    desc:'Pick which columns to compare, choose Levenshtein, token, or combined similarity, and set a threshold to surface near-duplicate records that exact matching would miss.' },
+    desc:'Pick which columns to compare, choose Levenshtein, token, or combined similarity, and set a threshold to surface near-duplicate records that exact matching would miss — or remove exact duplicates outright based on just the fields you select.' },
   { id:'db', tab:'db', icon:'🗄️', title:'Job History', level:'Beginner', duration:'1 min',
     desc:'Every saved cleanse job is stored to your account with row counts and status, so you can revisit or re-download results from past runs.' },
   { id:'setup', tab:'setup', icon:'🤖', title:'Configuring Groq', level:'Beginner', duration:'3 min',
@@ -181,6 +181,7 @@ export default function Home() {
   const [dedupResults, setDedupResults] = useState(null);
   const [dedupBusy, setDedupBusy] = useState(false);
   const [dedupMsg, setDedupMsg] = useState('');
+  const [dedupRemoveResult, setDedupRemoveResult] = useState(null);
 
   // Drag state
   const [dragging, setDragging] = useState(false);
@@ -234,6 +235,7 @@ export default function Home() {
     setRawData(s);
     setStats({ total: s.rows.length, issues: 0, fixed: 0, review: 0 });
     setDedupCols(s.headers.map(() => false));
+    setDedupResults(null); setDedupRemoveResult(null); setDedupMsg('');
     setCleanedData([]); setAuditEntries([]); setDqScore(null);
     setAgentHistory([]);
     setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
@@ -249,6 +251,7 @@ export default function Home() {
         setRawData({ headers, rows });
         setStats({ total: rows.length, issues: 0, fixed: 0, review: 0 });
         setDedupCols(headers.map(() => false));
+        setDedupResults(null); setDedupRemoveResult(null); setDedupMsg('');
         setCleanedData([]); setAuditEntries([]); setDqScore(null);
         setAgentHistory([]);
         setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
@@ -439,6 +442,30 @@ export default function Home() {
       setDedupMsg(`Found ${pairs.length} duplicate pair(s)`);
       setDedupBusy(false);
     }, 300);
+  }
+
+  function removeExactDuplicates() {
+    if (!rawData) return;
+    const { headers, rows } = rawData;
+    const activeCols = dedupCols.map((c, i) => c ? i : -1).filter(i => i >= 0);
+    const colIdxs = activeCols.length ? activeCols : headers.map((_, i) => i);
+    const seen = new Set();
+    const deduped = [];
+    for (const r of rows) {
+      const key = colIdxs.map(ci => r[ci] ?? '').join('');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(r);
+    }
+    const removed = rows.length - deduped.length;
+    setRawData({ headers, rows: deduped });
+    setStats(s => ({ ...s, total: deduped.length }));
+    setDedupResults(null);
+    setDedupRemoveResult({
+      removed,
+      remaining: deduped.length,
+      cols: activeCols.length ? activeCols.map(i => headers[i]) : null,
+    });
   }
 
   // ── Rules (DB-backed) ─────────────────────────────────────
@@ -861,7 +888,7 @@ export default function Home() {
               <div>
                 <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>🔁 Fuzzy Duplicate Detection</div>
                 <div className="info" style={{ marginBottom: 14 }}>
-                  <strong>Generic:</strong> works on any dataset. Select which columns to compare, set a similarity threshold, and click Run.
+                  <strong>Generic:</strong> works on any dataset. Select which columns to compare — <strong>Find Duplicates</strong> surfaces near-duplicate pairs above a similarity threshold, while <strong>Remove Duplicates</strong> deletes rows that are exact matches on the checked columns (or the whole row if none are checked), keeping the first occurrence.
                 </div>
                 <div style={{ background: 'var(--surf)', border: '1px solid var(--bdr)', borderRadius: 8, padding: 16, marginBottom: 16 }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
@@ -891,13 +918,22 @@ export default function Home() {
                         <option value="levenshtein">Levenshtein only (character edit distance)</option>
                         <option value="token">Token only (word overlap)</option>
                       </select>
-                      <div style={{ marginTop: 14 }}>
+                      <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
                         <button className="btn btn-p" onClick={runDedup} disabled={dedupBusy || !rawData}>🔁 Find Duplicates</button>
-                        <span style={{ fontSize: 11, color: 'var(--mut)', marginLeft: 10 }}>{dedupMsg}</span>
+                        <button className="btn btn-d" onClick={removeExactDuplicates} disabled={dedupBusy || !rawData}>🗑️ Remove Duplicates</button>
                       </div>
+                      <span style={{ fontSize: 11, color: 'var(--mut)' }}>{dedupMsg}</span>
                     </div>
                   </div>
                 </div>
+
+                {dedupRemoveResult && (
+                  <div className="info" style={{ marginBottom: 16 }}>
+                    Removed <strong>{dedupRemoveResult.removed}</strong> duplicate row(s) based on{' '}
+                    <strong>{dedupRemoveResult.cols ? dedupRemoveResult.cols.join(', ') : 'all columns (exact row match)'}</strong>.
+                    {' '}{dedupRemoveResult.remaining} row(s) remain.
+                  </div>
+                )}
 
                 {dedupResults && (
                   <>
