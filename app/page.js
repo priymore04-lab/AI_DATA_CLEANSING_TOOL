@@ -9,12 +9,12 @@ import { applyAction, COUNTRY_MAP } from '@/lib/agentTools';
 const TABS = ['guides','ingest','profile','rules','cleanse','audit','dedup','db','setup'];
 const TAB_LABELS = {
   guides:'📖 Guides', ingest:'📂 Ingest', profile:'🔍 Profile', rules:'⚙️ Rules',
-  cleanse:'⚡ Cleanse', audit:'📋 Audit', dedup:'🔁 Fuzzy Dedup',
+  cleanse:'⚡ Cleanse', audit:'📋 Audit', dedup:'🔁 Duplicates',
   db:'🗄️ Database', setup:'🤖 Groq Setup',
 };
 const NAV_LABELS = {
   guides:'📖 Guides', ingest:'📂 Ingest', profile:'🔍 Profile', rules:'⚙️ Rules',
-  cleanse:'⚡ AI Cleanse', audit:'📋 Audit Log', dedup:'🔁 Fuzzy Dedup',
+  cleanse:'⚡ AI Cleanse', audit:'📋 Audit Log', dedup:'🔁 Duplicates',
   db:'🗄️ Database', setup:'🤖 Groq Setup',
 };
 
@@ -29,8 +29,8 @@ const GUIDES = [
     desc:'Chat with the Groq-powered agent to fix data in plain English — "title case the Name column", "remove duplicates" — then layer optional rule-based cleansing on top and export the result.' },
   { id:'audit', tab:'audit', icon:'📋', title:'Reading the Audit Trail', level:'Beginner', duration:'2 min',
     desc:'Every change and flagged issue is logged with a timestamp, field, before/after value, and confidence score so you can trace exactly what the pipeline changed and why.' },
-  { id:'dedup', tab:'dedup', icon:'🔁', title:'Fuzzy Duplicate Detection', level:'Intermediate', duration:'4 min',
-    desc:'Pick which columns to compare, choose Levenshtein, token, or combined similarity, and set a threshold to surface near-duplicate records that exact matching would miss — or remove exact duplicates outright based on just the fields you select.' },
+  { id:'dedup', tab:'dedup', icon:'🔁', title:'Duplicate Detection', level:'Intermediate', duration:'4 min',
+    desc:'Two modes: Check Duplicates removes exact-match rows based on just the fields you select; Fuzzy Duplicates compares columns with Levenshtein, token, or combined similarity and a threshold to surface near-duplicate records that exact matching would miss.' },
   { id:'db', tab:'db', icon:'🗄️', title:'Job History', level:'Beginner', duration:'1 min',
     desc:'Every saved cleanse job is stored to your account with row counts and status, so you can revisit or re-download results from past runs.' },
   { id:'setup', tab:'setup', icon:'🤖', title:'Configuring Groq', level:'Beginner', duration:'3 min',
@@ -182,6 +182,7 @@ export default function Home() {
   const [dedupBusy, setDedupBusy] = useState(false);
   const [dedupMsg, setDedupMsg] = useState('');
   const [dedupRemoveResult, setDedupRemoveResult] = useState(null);
+  const [dedupMode, setDedupMode] = useState('exact');
 
   // Drag state
   const [dragging, setDragging] = useState(false);
@@ -883,99 +884,113 @@ export default function Home() {
               </div>
             )}
 
-            {/* FUZZY DEDUP */}
+            {/* DEDUP */}
             {tab === 'dedup' && (
               <div>
-                <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>🔁 Fuzzy Duplicate Detection</div>
+                <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>🔁 Duplicate Detection</div>
                 <div className="info" style={{ marginBottom: 14 }}>
-                  <strong>Generic:</strong> works on any dataset. Select which columns to compare — <strong>Find Duplicates</strong> surfaces near-duplicate pairs above a similarity threshold, while <strong>Remove Duplicates</strong> deletes rows that are exact matches on the checked columns (or the whole row if none are checked), keeping the first occurrence.
+                  <strong>Generic:</strong> works on any dataset. Pick a mode — <strong>Check Duplicates</strong> deletes rows that are exact matches on the columns you select (or the whole row if none are checked), keeping the first occurrence. <strong>Fuzzy Duplicates</strong> only surfaces near-duplicate pairs above a similarity threshold without changing your data.
                 </div>
+
+                <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                  <button className={`btn ${dedupMode === 'exact' ? 'btn-p' : 'btn-g'}`} onClick={() => setDedupMode('exact')}>🔍 Check Duplicates</button>
+                  <button className={`btn ${dedupMode === 'fuzzy' ? 'btn-p' : 'btn-g'}`} onClick={() => setDedupMode('fuzzy')}>🧬 Fuzzy Duplicates</button>
+                </div>
+
                 <div style={{ background: 'var(--surf)', border: '1px solid var(--bdr)', borderRadius: 8, padding: 16, marginBottom: 16 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                    <div>
-                      <div className="inp-lbl">Compare Columns <span style={{ color: 'var(--mut)', fontWeight: 400 }}>(leave all unchecked = use ALL)</span></div>
-                      <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 120, overflowY: 'auto', padding: 4 }}>
-                        {rawData ? rawData.headers.map((h, i) => (
-                          <label key={h} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontFamily: 'var(--mono)', cursor: 'pointer', color: 'var(--txt)' }}>
-                            <input type="checkbox" checked={dedupCols[i] || false}
-                              onChange={e => setDedupCols(c => { const n = [...c]; n[i] = e.target.checked; return n; })} />
-                            {h}
-                          </label>
-                        )) : <span style={{ color: 'var(--mut)', fontSize: 11, fontFamily: 'var(--mono)' }}>Load data first to see columns</span>}
+                  <div className="inp-lbl">Compare Columns <span style={{ color: 'var(--mut)', fontWeight: 400 }}>(leave all unchecked = use ALL)</span></div>
+                  <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 120, overflowY: 'auto', padding: 4 }}>
+                    {rawData ? rawData.headers.map((h, i) => (
+                      <label key={h} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontFamily: 'var(--mono)', cursor: 'pointer', color: 'var(--txt)' }}>
+                        <input type="checkbox" checked={dedupCols[i] || false}
+                          onChange={e => setDedupCols(c => { const n = [...c]; n[i] = e.target.checked; return n; })} />
+                        {h}
+                      </label>
+                    )) : <span style={{ color: 'var(--mut)', fontSize: 11, fontFamily: 'var(--mono)' }}>Load data first to see columns</span>}
+                  </div>
+
+                  {dedupMode === 'fuzzy' && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 16 }}>
+                      <div>
+                        <div className="inp-lbl">Similarity Threshold</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+                          <input type="range" min="50" max="99" value={dedupThreshold}
+                            onChange={e => setDedupThreshold(Number(e.target.value))}
+                            style={{ flex: 1, accentColor: 'var(--grn)' }} />
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 800, color: 'var(--grn)', minWidth: 38 }}>{dedupThreshold}%</span>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="inp-lbl">Algorithm</div>
+                        <select className="inp model-select" value={dedupAlgo} onChange={e => setDedupAlgo(e.target.value)} style={{ marginTop: 6 }}>
+                          <option value="combined">Combined (Levenshtein + Token) — Recommended</option>
+                          <option value="levenshtein">Levenshtein only (character edit distance)</option>
+                          <option value="token">Token only (word overlap)</option>
+                        </select>
                       </div>
                     </div>
-                    <div>
-                      <div className="inp-lbl">Similarity Threshold</div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6, marginBottom: 14 }}>
-                        <input type="range" min="50" max="99" value={dedupThreshold}
-                          onChange={e => setDedupThreshold(Number(e.target.value))}
-                          style={{ flex: 1, accentColor: 'var(--grn)' }} />
-                        <span style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 800, color: 'var(--grn)', minWidth: 38 }}>{dedupThreshold}%</span>
-                      </div>
-                      <div className="inp-lbl">Algorithm</div>
-                      <select className="inp model-select" value={dedupAlgo} onChange={e => setDedupAlgo(e.target.value)} style={{ marginTop: 6 }}>
-                        <option value="combined">Combined (Levenshtein + Token) — Recommended</option>
-                        <option value="levenshtein">Levenshtein only (character edit distance)</option>
-                        <option value="token">Token only (word overlap)</option>
-                      </select>
-                      <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-                        <button className="btn btn-p" onClick={runDedup} disabled={dedupBusy || !rawData}>🔁 Find Duplicates</button>
-                        <button className="btn btn-d" onClick={removeExactDuplicates} disabled={dedupBusy || !rawData}>🗑️ Remove Duplicates</button>
-                      </div>
-                      <span style={{ fontSize: 11, color: 'var(--mut)' }}>{dedupMsg}</span>
-                    </div>
+                  )}
+
+                  <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                    {dedupMode === 'exact'
+                      ? <button className="btn btn-d" onClick={removeExactDuplicates} disabled={dedupBusy || !rawData}>🗑️ Remove Duplicates</button>
+                      : <button className="btn btn-p" onClick={runDedup} disabled={dedupBusy || !rawData}>🔁 Find Duplicates</button>}
+                    <span style={{ fontSize: 11, color: 'var(--mut)' }}>{dedupMsg}</span>
                   </div>
                 </div>
 
-                {dedupRemoveResult && (
-                  <div className="info" style={{ marginBottom: 16 }}>
-                    Removed <strong>{dedupRemoveResult.removed}</strong> duplicate row(s) based on{' '}
-                    <strong>{dedupRemoveResult.cols ? dedupRemoveResult.cols.join(', ') : 'all columns (exact row match)'}</strong>.
-                    {' '}{dedupRemoveResult.remaining} row(s) remain.
-                  </div>
+                {dedupMode === 'exact' && (
+                  dedupRemoveResult
+                    ? <div className="info" style={{ marginBottom: 16 }}>
+                        Removed <strong>{dedupRemoveResult.removed}</strong> duplicate row(s) based on{' '}
+                        <strong>{dedupRemoveResult.cols ? dedupRemoveResult.cols.join(', ') : 'all columns (exact row match)'}</strong>.
+                        {' '}{dedupRemoveResult.remaining} row(s) remain.
+                      </div>
+                    : <div className="info">Select columns above (optional) and click "Remove Duplicates" to delete exact-match rows.</div>
                 )}
 
-                {dedupResults && (
-                  <>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 16 }}>
-                      {[
-                        { val: dedupResults.total, label: 'Pairs Checked', color: 'var(--blu)' },
-                        { val: dedupResults.found, label: 'Duplicates Found', color: 'var(--warn)' },
-                        { val: dedupResults.exact, label: 'Exact Matches', color: 'var(--red)' },
-                        { val: dedupResults.groups, label: 'Dup Clusters', color: 'var(--pur)' },
-                      ].map(({ val, label, color }) => (
-                        <div key={label} style={{ background: 'var(--surf)', border: '1px solid var(--bdr)', borderRadius: 7, padding: 12, textAlign: 'center' }}>
-                          <div style={{ fontSize: 22, fontWeight: 800, color }}>{val}</div>
-                          <div style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--mut)', textTransform: 'uppercase', letterSpacing: .5 }}>{label}</div>
-                        </div>
-                      ))}
-                    </div>
-                    {dedupResults.pairs.length === 0
-                      ? <div className="info">No duplicates found above threshold.</div>
-                      : <div className="tbl-wrap"><div className="tbl-scroll">
-                        <table className="tbl">
-                          <thead><tr>
-                            <th>Row A</th><th>Row B</th><th>Overall</th>
-                            {rawData.headers.map(h => <th key={h}>{h}</th>)}
-                          </tr></thead>
-                          <tbody>{dedupResults.pairs.slice(0, 100).map((p, idx) => (
-                            <tr key={idx}>
-                              <td>#{p.i + 1}</td><td>#{p.j + 1}</td>
-                              <td><span style={{ color: p.overall >= 0.99 ? 'var(--red)' : 'var(--warn)', fontWeight: 700 }}>{Math.round(p.overall * 100)}%</span></td>
-                              {rawData.headers.map((h, hi) => {
-                                const sim = p.colSims.find(c => c.col === h);
-                                return <td key={h} style={{ color: sim && sim.sim >= 0.9 ? 'var(--grn)' : 'var(--txt)' }}>
-                                  {rawData.rows[p.i][hi]} / {rawData.rows[p.j][hi]}
-                                </td>;
-                              })}
-                            </tr>
-                          ))}</tbody>
-                        </table>
-                      </div></div>
-                    }
-                  </>
+                {dedupMode === 'fuzzy' && (
+                  dedupResults ? (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 16 }}>
+                        {[
+                          { val: dedupResults.total, label: 'Pairs Checked', color: 'var(--blu)' },
+                          { val: dedupResults.found, label: 'Duplicates Found', color: 'var(--warn)' },
+                          { val: dedupResults.exact, label: 'Exact Matches', color: 'var(--red)' },
+                          { val: dedupResults.groups, label: 'Dup Clusters', color: 'var(--pur)' },
+                        ].map(({ val, label, color }) => (
+                          <div key={label} style={{ background: 'var(--surf)', border: '1px solid var(--bdr)', borderRadius: 7, padding: 12, textAlign: 'center' }}>
+                            <div style={{ fontSize: 22, fontWeight: 800, color }}>{val}</div>
+                            <div style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--mut)', textTransform: 'uppercase', letterSpacing: .5 }}>{label}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {dedupResults.pairs.length === 0
+                        ? <div className="info">No duplicates found above threshold.</div>
+                        : <div className="tbl-wrap"><div className="tbl-scroll">
+                          <table className="tbl">
+                            <thead><tr>
+                              <th>Row A</th><th>Row B</th><th>Overall</th>
+                              {rawData.headers.map(h => <th key={h}>{h}</th>)}
+                            </tr></thead>
+                            <tbody>{dedupResults.pairs.slice(0, 100).map((p, idx) => (
+                              <tr key={idx}>
+                                <td>#{p.i + 1}</td><td>#{p.j + 1}</td>
+                                <td><span style={{ color: p.overall >= 0.99 ? 'var(--red)' : 'var(--warn)', fontWeight: 700 }}>{Math.round(p.overall * 100)}%</span></td>
+                                {rawData.headers.map((h, hi) => {
+                                  const sim = p.colSims.find(c => c.col === h);
+                                  return <td key={h} style={{ color: sim && sim.sim >= 0.9 ? 'var(--grn)' : 'var(--txt)' }}>
+                                    {rawData.rows[p.i][hi]} / {rawData.rows[p.j][hi]}
+                                  </td>;
+                                })}
+                              </tr>
+                            ))}</tbody>
+                          </table>
+                        </div></div>
+                      }
+                    </>
+                  ) : <div className="info">Configure options above and click "Find Duplicates".</div>
                 )}
-                {!dedupResults && <div className="info">Configure options above and click "Find Duplicates".</div>}
               </div>
             )}
 
