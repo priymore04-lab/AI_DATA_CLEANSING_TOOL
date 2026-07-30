@@ -450,12 +450,6 @@ export default function Home() {
     setRulesLoading(false);
   }
 
-  async function addRule() {
-    const r = await fetch('/api/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ field: 'Field', type: 'New Rule', action: 'trim', active: true, expression: '', description: '' }) });
-    const d = await r.json();
-    if (r.ok) setRules(rs => [...rs, d.rule]);
-  }
-
   async function deleteRule(id) {
     await fetch(`/api/rules/${id}`, { method: 'DELETE' });
     setRules(rs => rs.filter(x => x.id !== id));
@@ -660,7 +654,6 @@ export default function Home() {
               <div>
                 <div className="flex-row">
                   <span style={{ fontSize: 13, fontWeight: 800 }}>Cleansing Rules</span>
-                  <button className="btn btn-p btn-sm" onClick={addRule}>+ Add Rule</button>
                   <button className="btn btn-g btn-sm" onClick={resetRules}>↺ Reset</button>
                 </div>
                 {rulesLoading && <div className="info"><span className="spin" /> Loading your rules...</div>}
