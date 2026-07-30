@@ -168,7 +168,7 @@ export default function Home() {
   // AI chat
   const [rulesMsgs, setRulesMsgs] = useState([{ cls: 'sys', text: 'Tell me what rules to create — e.g. "add rules for name, email and phone" — and I\'ll add them to the list above.' }]);
   const [rulesInput, setRulesInput] = useState('');
-  const [cleanseMsgs, setCleanseMsgs] = useState([{ cls: 'sys', text: 'Hi, I\'m your AI Cleansing Agent 👋 Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]);
+  const [cleanseMsgs, setCleanseMsgs] = useState([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
   const [cleanseInput, setCleanseInput] = useState('');
   const [agentHistory, setAgentHistory] = useState([]);
   const [chatBusy, setChatBusy] = useState(false);
@@ -236,7 +236,7 @@ export default function Home() {
     setDedupCols(s.headers.map(() => false));
     setCleanedData([]); setAuditEntries([]); setDqScore(null);
     setAgentHistory([]);
-    setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI Cleansing Agent 👋 Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]);
+    setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
     setTab('ingest');
   }
 
@@ -251,7 +251,7 @@ export default function Home() {
         setDedupCols(headers.map(() => false));
         setCleanedData([]); setAuditEntries([]); setDqScore(null);
         setAgentHistory([]);
-        setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI Cleansing Agent 👋 Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]);
+        setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
       },
     });
   }
@@ -363,15 +363,15 @@ export default function Home() {
   }
 
   async function aiChat() {
-    const p = cleanseInput.trim(); if (!p || !rawData) return;
+    const p = cleanseInput.trim(); if (!p) return;
     setCleanseInput('');
     setCleanseMsgs(m => [...m, { cls: 'usr', text: p }, { cls: 'sys loading', text: '...' }]);
     setChatBusy(true);
 
-    // Convert array rows → objects for the agent
-    const objRows = rawData.rows.map(row =>
-      Object.fromEntries(rawData.headers.map((h, i) => [h, row[i] ?? '']))
-    );
+    // Convert array rows → objects for the agent (only when a dataset is loaded)
+    const objRows = rawData
+      ? rawData.rows.map(row => Object.fromEntries(rawData.headers.map((h, i) => [h, row[i] ?? ''])))
+      : [];
 
     try {
       const res = await fetch('/api/agent', {
@@ -380,7 +380,7 @@ export default function Home() {
         body: JSON.stringify({
           message: p,
           history: agentHistory,
-          headers: rawData.headers,
+          headers: rawData ? rawData.headers : [],
           rows: objRows,
           userRules: rules,
           systemContext,
@@ -390,11 +390,13 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Agent error');
 
-      // Convert object rows back → arrays and update rawData
-      const newHeaders = data.headers;
-      const newRows = data.rows.map(obj => newHeaders.map(h => obj[h] ?? ''));
-      setRawData({ headers: newHeaders, rows: newRows });
-      setStats(s => ({ ...s, total: newRows.length }));
+      // Convert object rows back → arrays and update rawData (only if a dataset was loaded)
+      if (rawData) {
+        const newHeaders = data.headers;
+        const newRows = data.rows.map(obj => newHeaders.map(h => obj[h] ?? ''));
+        setRawData({ headers: newHeaders, rows: newRows });
+        setStats(s => ({ ...s, total: newRows.length }));
+      }
 
       // Persist conversation so the agent remembers context
       setAgentHistory(h => [...h, { role: 'user', content: p }, { role: 'assistant', content: data.reply }]);
@@ -720,32 +722,35 @@ export default function Home() {
             {/* CLEANSE */}
             {tab === 'cleanse' && (
               <div>
-                {!rawData && <div className="info">Load data first from the Ingest tab.</div>}
+                {/* AI Agent — works with or without a loaded dataset */}
+                <div className="ai-panel" style={{ marginBottom: 16 }}>
+                  <div className="ai-hdr"><span className="ai-pulse" />Groq AI Agent — ask me anything or tell me what to fix</div>
+                  {!rawData && (
+                    <div className="info" style={{ marginBottom: 10 }}>
+                      No dataset loaded — you can still ask general questions (e.g. "what are the key columns for a Material master in SAP?"). Load a file from the Ingest tab to also clean data.
+                    </div>
+                  )}
+                  <div className="ai-msgs" ref={cleanseMsgsRef} style={{ maxHeight: 220 }}>
+                    {cleanseMsgs.map((m, i) => (
+                      <div key={i} className={`am ${m.cls}`}>
+                        {m.cls === 'sys loading' ? <><span className="spin" /> Groq is working...</> : m.text}
+                        {m.toolLog && <div style={{ marginTop: 5, fontSize: 10, color: 'var(--mut)', whiteSpace: 'pre' }}>{m.toolLog}</div>}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="ai-inp-row">
+                    <input className="ai-inp" value={cleanseInput}
+                      placeholder={rawData ? `e.g. "title case the Name column", "fix emails", "remove duplicates"` : `e.g. "key columns for Material master in SAP"`}
+                      disabled={chatBusy}
+                      onChange={e => setCleanseInput(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && !chatBusy && aiChat()} />
+                    <button className="btn btn-p btn-sm" onClick={aiChat} disabled={chatBusy}>
+                      {chatBusy ? <span className="spin" /> : 'Send'}
+                    </button>
+                  </div>
+                </div>
 
                 {rawData && <>
-                  {/* AI Agent — primary action */}
-                  <div className="ai-panel" style={{ marginBottom: 16 }}>
-                    <div className="ai-hdr"><span className="ai-pulse" />Groq AI Cleanse Agent — tell me what to fix</div>
-                    <div className="ai-msgs" ref={cleanseMsgsRef} style={{ maxHeight: 220 }}>
-                      {cleanseMsgs.map((m, i) => (
-                        <div key={i} className={`am ${m.cls}`}>
-                          {m.cls === 'sys loading' ? <><span className="spin" /> Groq is working...</> : m.text}
-                          {m.toolLog && <div style={{ marginTop: 5, fontSize: 10, color: 'var(--mut)', whiteSpace: 'pre' }}>{m.toolLog}</div>}
-                        </div>
-                      ))}
-                    </div>
-                    <div className="ai-inp-row">
-                      <input className="ai-inp" value={cleanseInput}
-                        placeholder={rawData ? `e.g. "title case the Name column", "fix emails", "remove duplicates"` : 'Load data first'}
-                        disabled={chatBusy || !rawData}
-                        onChange={e => setCleanseInput(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && !chatBusy && aiChat()} />
-                      <button className="btn btn-p btn-sm" onClick={aiChat} disabled={chatBusy || !rawData}>
-                        {chatBusy ? <span className="spin" /> : 'Send'}
-                      </button>
-                    </div>
-                  </div>
-
                   {/* Live data preview — always shows current rawData state */}
                   <div style={{ marginBottom: 14 }}>
                     <div className="flex-row">
@@ -753,7 +758,7 @@ export default function Home() {
                       <span style={{ fontSize: 11, color: 'var(--mut)', fontFamily: 'var(--mono)' }}>{rawData.rows.length} rows · {rawData.headers.length} cols</span>
                       <button className="btn btn-g btn-sm" onClick={() => { const csv = Papa.unparse({ fields: rawData.headers, data: rawData.rows }); download(csv, 'data.csv'); }}>↓ Download CSV</button>
                       {agentHistory.length > 0 && (
-                        <button className="btn btn-d btn-sm" onClick={() => { setAgentHistory([]); setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI Cleansing Agent 👋 Tell me what to clean — e.g. "standardize the country column" or "remove duplicate rows".' }]); }}>
+                        <button className="btn btn-d btn-sm" onClick={() => { setAgentHistory([]); setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]); }}>
                           ↺ Reset chat
                         </button>
                       )}

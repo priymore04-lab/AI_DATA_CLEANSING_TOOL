@@ -1,7 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { TOOL_DEFS, executeTool } from '@/lib/agentTools';
 
-function buildSystemPrompt(userRules = [], systemContext = '') {
+function buildSystemPrompt(userRules = [], systemContext = '', hasData = false) {
   const activeRules = userRules.filter(r => r.active);
 
   const rulesSection = activeRules.length
@@ -12,16 +12,24 @@ function buildSystemPrompt(userRules = [], systemContext = '') {
     ? `\nDomain context provided by the user — follow these instructions carefully:\n${systemContext.trim()}`
     : '';
 
-  return `You are a data cleaning agent working on a CSV already loaded in memory. You have tools to inspect and modify it.
+  const dataSection = hasData
+    ? `\nA dataset is currently loaded in memory. You have tools to inspect and modify it.
 
-Core rules:
+Core rules for editing the loaded dataset:
 - Always call inspect_column before proposing a standardize_values mapping — never guess corrections without seeing the real values.
 - Prefer apply_rule when a matching user-defined rule exists for the column.
 - Use run_transform for any custom transformation not covered by standard tools — write a concise, safe JS expression using \`value\` as the cell string.
 - Never invent replacement data for missing values. Only remove_rows_with_missing when the user explicitly asks to delete rows.
 - Take as many tool-call steps as needed to fully satisfy one user request, but don't take actions the user didn't ask for.
-- When you're done, reply in plain text summarising what you did in 1–3 short sentences. No markdown headers.
-${rulesSection}${contextSection}`;
+${rulesSection}${contextSection}`
+    : `\nNo dataset is currently loaded, so the data-editing tools don't apply right now — just answer the user directly using your own knowledge. Don't call any tools.${contextSection}`;
+
+  return `You are a helpful, interactive data quality assistant. Users may ask you two kinds of things, in any order:
+1. General questions — e.g. data standards, master-data key fields/rules for systems like SAP, Salesforce, etc., data modeling advice, or anything else. Answer these conversationally and directly from your own knowledge, as specifically and accurately as you can. Don't refuse or deflect just because it's not about the loaded file.
+2. Requests to inspect or clean the dataset currently loaded (if any) — use the provided tools for these.
+
+Reply in plain text, 1-4 short sentences unless the user asks for a list/table, no markdown headers.
+${dataSection}`;
 }
 
 export async function POST(req) {
@@ -34,11 +42,12 @@ export async function POST(req) {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) return Response.json({ error: 'GROQ_API_KEY is not set. Add it to .env.local and restart.' }, { status: 500 });
 
-    const state = { headers, rows: rows.map(r => ({ ...r })) };
+    const hasData = Array.isArray(headers) && headers.length > 0;
+    const state = { headers: headers || [], rows: (rows || []).map(r => ({ ...r })) };
     const toolLog = [];
 
     const messages = [
-      { role: 'system', content: buildSystemPrompt(userRules, systemContext) },
+      { role: 'system', content: buildSystemPrompt(userRules, systemContext, hasData) },
       ...(history || []),
       { role: 'user', content: message },
     ];
@@ -53,8 +62,8 @@ export async function POST(req) {
           model: model || 'llama-3.3-70b-versatile',
           max_tokens: 1500,
           messages,
-          tools: TOOL_DEFS,
-          tool_choice: 'auto',
+          tools: hasData ? TOOL_DEFS : undefined,
+          tool_choice: hasData ? 'auto' : undefined,
         }),
       });
 

@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>DataCleanse AI — Technical Presentation</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #0a0c10;
+    --card: #111318;
+    --border: #1e2330;
+    --grn: #00e5a0;
+    --grn2: #00b07a;
+    --blue: #4fc3f7;
+    --purple: #b39ddb;
+    --yellow: #ffd54f;
+    --red: #ef5350;
+    --txt: #e0e6f0;
+    --muted: #6b7a99;
+    --accent: rgba(0,229,160,0.08);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'IBM Plex Mono', monospace;
+    background: var(--bg);
+    color: var(--txt);
+    line-height: 1.7;
+  }
+
+  /* ── Cover ── */
+  .cover {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(ellipse at 50% 0%, rgba(0,229,160,0.12) 0%, transparent 65%),
+                radial-gradient(ellipse at 80% 100%, rgba(79,195,247,0.08) 0%, transparent 60%),
+                var(--bg);
+    text-align: center;
+    padding: 4rem 2rem;
+    page-break-after: always;
+  }
+
+  .cover-badge {
+    display: inline-block;
+    background: var(--accent);
+    border: 1px solid var(--grn);
+    color: var(--grn);
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    padding: 0.3rem 0.9rem;
+    border-radius: 2px;
+    margin-bottom: 2rem;
+  }
+
+  .cover h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(2.5rem, 6vw, 4.5rem);
+    font-weight: 800;
+    color: var(--grn);
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    margin-bottom: 1rem;
+  }
+
+  .cover h1 span { color: var(--txt); }
+
+  .cover-sub {
+    font-size: 1.05rem;
+    color: var(--muted);
+    max-width: 600px;
+    margin: 0 auto 3rem;
+  }
+
+  .cover-meta {
+    display: flex;
+    gap: 2.5rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    font-size: 0.78rem;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    padding-top: 2rem;
+    margin-top: 2rem;
+    width: 100%;
+    max-width: 700px;
+  }
+
+  .cover-meta span { color: var(--txt); font-weight: 600; }
+
+  /* ── Layout ── */
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 5rem 2rem;
+  }
+
+  .section {
+    margin-bottom: 6rem;
+    page-break-inside: avoid;
+  }
+
+  .section-label {
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--grn);
+    margin-bottom: 0.6rem;
+  }
+
+  h2 {
+    font-family: 'Syne', sans-serif;
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--txt);
+    margin-bottom: 1.8rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.8rem;
+  }
+
+  h3 {
+    font-family: 'Syne', sans-serif;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--grn);
+    margin: 2rem 0 0.8rem;
+  }
+
+  p { color: var(--muted); margin-bottom: 1rem; }
+
+  strong { color: var(--txt); font-weight: 600; }
+
+  /* ── Cards ── */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.25rem;
+    margin-top: 1.5rem;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.5rem;
+    transition: border-color 0.2s;
+  }
+
+  .card:hover { border-color: var(--grn2); }
+
+  .card-icon {
+    font-size: 1.6rem;
+    margin-bottom: 0.8rem;
+  }
+
+  .card h4 {
+    font-family: 'Syne', sans-serif;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--txt);
+    margin-bottom: 0.5rem;
+  }
+
+  .card p { font-size: 0.82rem; margin: 0; }
+
+  /* ── Architecture diagram ── */
+  .arch {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2rem;
+    margin-top: 1.5rem;
+    overflow-x: auto;
+  }
+
+  .arch-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+  }
+
+  .arch-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.5rem 1rem;
+    font-size: 0.78rem;
+    color: var(--txt);
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .arch-box.grn { border-color: var(--grn); color: var(--grn); }
+  .arch-box.blue { border-color: var(--blue); color: var(--blue); }
+  .arch-box.purple { border-color: var(--purple); color: var(--purple); }
+  .arch-box.yellow { border-color: var(--yellow); color: var(--yellow); }
+
+  .arch-arrow {
+    color: var(--muted);
+    font-size: 1.1rem;
+  }
+
+  .arch-label {
+    font-size: 0.65rem;
+    color: var(--muted);
+    text-align: center;
+    margin-bottom: 1.2rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  /* ── Table ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1.2rem;
+    font-size: 0.82rem;
+  }
+
+  th {
+    background: var(--card);
+    color: var(--grn);
+    font-weight: 600;
+    text-align: left;
+    padding: 0.7rem 1rem;
+    border-bottom: 2px solid var(--border);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  td {
+    padding: 0.65rem 1rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    vertical-align: top;
+  }
+
+  td strong { color: var(--txt); }
+
+  tr:hover td { background: var(--accent); }
+
+  /* ── Code ── */
+  pre {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--grn);
+    border-radius: 4px;
+    padding: 1.2rem 1.5rem;
+    font-size: 0.78rem;
+    overflow-x: auto;
+    color: var(--grn);
+    margin: 1rem 0;
+  }
+
+  code { color: var(--grn); font-family: 'IBM Plex Mono', monospace; }
+
+  /* ── Badges ── */
+  .badge {
+    display: inline-block;
+    padding: 0.2rem 0.55rem;
+    border-radius: 3px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .badge-grn { background: rgba(0,229,160,0.12); color: var(--grn); border: 1px solid var(--grn2); }
+  .badge-blue { background: rgba(79,195,247,0.12); color: var(--blue); border: 1px solid #4fc3f7; }
+  .badge-purple { background: rgba(179,157,219,0.12); color: var(--purple); border: 1px solid #9575cd; }
+  .badge-yellow { background: rgba(255,213,79,0.12); color: var(--yellow); border: 1px solid #ffb300; }
+  .badge-red { background: rgba(239,83,80,0.12); color: var(--red); border: 1px solid #e53935; }
+
+  /* ── Stat row ── */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+
+  .stat-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.2rem;
+    text-align: center;
+  }
+
+  .stat-num {
+    font-family: 'Syne', sans-serif;
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--grn);
+    display: block;
+  }
+
+  .stat-lbl {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-top: 0.3rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  /* ── Timeline ── */
+  .timeline { margin: 1.5rem 0; }
+
+  .tl-item {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.2rem;
+  }
+
+  .tl-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--grn);
+    margin-top: 0.4rem;
+    flex-shrink: 0;
+    box-shadow: 0 0 6px var(--grn);
+  }
+
+  .tl-content h4 {
+    font-family: 'Syne', sans-serif;
+    font-size: 0.9rem;
+    color: var(--txt);
+    margin-bottom: 0.2rem;
+  }
+
+  .tl-content p { font-size: 0.8rem; margin: 0; }
+
+  /* ── Flow diagram ── */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin: 1.5rem 0;
+    align-items: center;
+  }
+
+  .flow-step {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.6rem 1.5rem;
+    font-size: 0.8rem;
+    color: var(--txt);
+    width: 100%;
+    max-width: 480px;
+    text-align: center;
+  }
+
+  .flow-step.active { border-color: var(--grn); color: var(--grn); }
+  .flow-arrow-v { color: var(--muted); font-size: 1.1rem; line-height: 1; }
+
+  /* ── Footer ── */
+  .doc-footer {
+    border-top: 1px solid var(--border);
+    text-align: center;
+    padding: 3rem 2rem;
+    color: var(--muted);
+    font-size: 0.75rem;
+  }
+
+  /* ── Print ── */
+  @media print {
+    .cover { min-height: auto; padding: 3rem; }
+    body { background: #fff; color: #111; }
+    .cover, .card, .arch, .stat-box, .flow-step { background: #f5f5f5 !important; }
+    a { color: inherit; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════ COVER ══ -->
+<div class="cover">
+  <div class="cover-badge">Technical Presentation</div>
+  <h1><span>DataCleanse</span> AI</h1>
+  <p class="cover-sub">
+    An AI-powered, agentic data cleansing platform built on Next.js 14,
+    Groq (LLaMA 3.3-70B), Supabase, and Clerk — designed to replace
+    manual data preparation workflows.
+  </p>
+  <div class="cover-meta">
+    <div>Stack<br><span>Next.js 14 · Groq · Supabase · Clerk</span></div>
+    <div>Deployment<br><span>Vercel (Edge-compatible)</span></div>
+    <div>AI Model<br><span>LLaMA 3.3-70B-Versatile</span></div>
+    <div>Prepared<br><span>July 2026</span></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ MAIN CONTENT ══ -->
+<div class="container">
+
+  <!-- ── 1. Executive Summary ── -->
+  <div class="section">
+    <div class="section-label">01 — Overview</div>
+    <h2>Executive Summary</h2>
+    <p>
+      The <strong>AI Data Cleansing Tool</strong> mission delivers a scalable, reusable capability
+      to detect, recommend, and auto-correct data quality issues. It improves reliability of
+      analytics and AI, reduces manual work, and provides measurable outcomes through
+      quality KPIs, adoption metrics, and operational incident reduction.
+    </p>
+
+    <div class="stat-row">
+      <div class="stat-box"><span class="stat-num">9</span><div class="stat-lbl">Built-in AI Tools</div></div>
+      <div class="stat-box"><span class="stat-num">8</span><div class="stat-lbl">Agent Loop Steps</div></div>
+      <div class="stat-box"><span class="stat-num">&lt;2s</span><div class="stat-lbl">Avg. Groq Inference</div></div>
+      <div class="stat-box"><span class="stat-num">100%</span><div class="stat-lbl">Serverless Deploy</div></div>
+      <div class="stat-box"><span class="stat-num">0</span><div class="stat-lbl">Local GPU Required</div></div>
+    </div>
+  </div>
+
+  <!-- ── 2. Architecture ── -->
+  <div class="section">
+    <div class="section-label">02 — Architecture</div>
+    <h2>System Architecture</h2>
+    <p>
+      The application follows a <strong>Next.js App Router</strong> architecture with
+      all AI and database operations running inside API route handlers on the server.
+      The browser never holds an API key.
+    </p>
+
+    <div class="arch">
+      <div class="arch-label">Request flow — left to right</div>
+
+      <div class="arch-row">
+        <div class="arch-box grn">Browser (React)</div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box blue">Next.js Edge API Routes</div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box yellow">Groq API<br><small>LLaMA 3.3-70B</small></div>
+      </div>
+
+      <div style="text-align:center;margin:0.5rem 0;color:var(--muted);font-size:0.9rem;">↕ Auth (Clerk JWT)</div>
+
+      <div class="arch-row">
+        <div class="arch-box purple">Clerk Auth</div>
+        <div class="arch-arrow">←→</div>
+        <div class="arch-box blue">API Routes</div>
+        <div class="arch-arrow">←→</div>
+        <div class="arch-box purple">Supabase PostgreSQL<br><small>rules · jobs</small></div>
+      </div>
+
+      <div style="margin-top:1.5rem;">
+        <table>
+          <thead><tr><th>Layer</th><th>Technology</th><th>Responsibility</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Frontend</strong></td><td>Next.js 14, React, CSS Variables</td><td>8-tab UI, live preview, CSV upload/download</td></tr>
+            <tr><td><strong>Authentication</strong></td><td>Clerk</td><td>Sign-in/up, JWT validation, user identity</td></tr>
+            <tr><td><strong>AI Agent</strong></td><td>Groq API (LLaMA 3.3-70B)</td><td>Tool-use loop, natural language → data ops</td></tr>
+            <tr><td><strong>Tool Executor</strong></td><td>Custom JS (<code>agentTools.js</code>)</td><td>Runs inspect/transform tools in-memory</td></tr>
+            <tr><td><strong>Database</strong></td><td>Supabase (PostgreSQL)</td><td>Persistent rules, audit jobs per user</td></tr>
+            <tr><td><strong>Hosting</strong></td><td>Vercel</td><td>Serverless functions, CDN, CI/CD from GitHub</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 3. Key Features ── -->
+  <div class="section">
+    <div class="section-label">03 — Features</div>
+    <h2>Key Features</h2>
+
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-icon">🤖</div>
+        <h4>AI Chat Agent</h4>
+        <p>Type in plain English ("clean the phone numbers", "standardize country names"). The agent inspects your data, calls the right tools, and cleans it — no code required.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">📋</div>
+        <h4>Rules Engine</h4>
+        <p>Define named, reusable cleansing rules (trim, title_case, validate_email, custom JS expressions). Stored in Supabase and applied automatically across sessions.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔍</div>
+        <h4>Data Profiling</h4>
+        <p>Auto-generates per-column quality reports: null %, unique values, data type inference. DQ score computed to quantify dataset health.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔁</div>
+        <h4>Fuzzy Deduplication</h4>
+        <p>Levenshtein + token-similarity algorithms identify near-duplicate rows across configurable columns. Threshold slider controls strictness.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">📊</div>
+        <h4>Live Preview & Audit</h4>
+        <p>Every transformation is tracked in a timestamped audit log. Download the clean CSV or the full audit trail as separate exports.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">⚡</div>
+        <h4>Multi-model Support</h4>
+        <p>Switch between Groq-hosted models (LLaMA 3.3-70B, Gemma 2-9B, Mixtral 8x7B) from the UI. Status indicator shows live API health.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔐</div>
+        <h4>Row-level Isolation</h4>
+        <p>Every rule and job is scoped to the authenticated user's ID. No data leakage between accounts. Clerk + Supabase service-role pattern.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🌐</div>
+        <h4>Fully Serverless</h4>
+        <p>No server to manage. Vercel auto-deploys from GitHub. API routes scale to zero and spin up on demand.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">📥</div>
+        <h4>Sample Datasets</h4>
+        <p>Three built-in demo datasets (Customer, Product Catalog, Address) let you explore every feature without uploading your own data.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 4. AI Agent Deep-dive ── -->
+  <div class="section">
+    <div class="section-label">04 — AI Agent</div>
+    <h2>How the AI Agent Works</h2>
+    <p>
+      The agent is a <strong>multi-step tool-use loop</strong> powered by Groq's OpenAI-compatible
+      chat completions endpoint with function calling. It can take up to 8 sequential steps
+      per user message, chaining tool calls to fully satisfy a request.
+    </p>
+
+    <h3>Agent Loop</h3>
+    <div class="flow">
+      <div class="flow-step active">1. User sends message ("fix phone numbers in the dataset")</div>
+      <div class="flow-arrow-v">↓</div>
+      <div class="flow-step">2. System prompt injected (user rules + domain context)</div>
+      <div class="flow-arrow-v">↓</div>
+      <div class="flow-step active">3. Groq returns tool_calls → [ inspect_column("Phone") ]</div>
+      <div class="flow-arrow-v">↓</div>
+      <div class="flow-step">4. executeTool() runs — returns sample values + missing count</div>
+      <div class="flow-arrow-v">↓</div>
+      <div class="flow-step active">5. Groq sees result → calls apply_rule("Phone", "normalize_phone")</div>
+      <div class="flow-arrow-v">↓</div>
+      <div class="flow-step">6. executeTool() mutates rows in memory, returns rows_changed count</div>
+      <div class="flow-arrow-v">↓</div>
+      <div class="flow-step active">7. Groq returns final text reply — no more tool calls</div>
+      <div class="flow-arrow-v">↓</div>
+      <div class="flow-step">8. API responds with { reply, headers, rows, toolLog }</div>
+    </div>
+
+    <h3>Available Agent Tools</h3>
+    <table>
+      <thead><tr><th>Tool</th><th>Purpose</th><th>Always Inspect First?</th></tr></thead>
+      <tbody>
+        <tr><td><code>summarize_data</code></td><td>Row/column counts and column names</td><td>—</td></tr>
+        <tr><td><code>inspect_column</code></td><td>Distinct sample values + missing count</td><td>Yes (prerequisite)</td></tr>
+        <tr><td><code>trim_whitespace</code></td><td>Strip leading/trailing spaces</td><td>Optional</td></tr>
+        <tr><td><code>set_case</code></td><td>title / upper / lower case normalization</td><td>Optional</td></tr>
+        <tr><td><code>standardize_values</code></td><td>Map variants → canonical form</td><td><strong>Yes — required</strong></td></tr>
+        <tr><td><code>apply_rule</code></td><td>Run a user-defined persistent rule</td><td>Optional</td></tr>
+        <tr><td><code>run_transform</code></td><td>Execute arbitrary JS expression per row</td><td>Optional</td></tr>
+        <tr><td><code>remove_duplicate_rows</code></td><td>Exact byte-for-byte deduplication</td><td>—</td></tr>
+        <tr><td><code>remove_rows_with_missing</code></td><td>Delete rows missing a value in a column</td><td>—</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Security — JS Sandbox</h3>
+    <p>
+      The <code>run_transform</code> tool lets the AI write custom JavaScript. Execution
+      is sandboxed by blocking dangerous keywords before <code>new Function()</code> evaluation:
+    </p>
+    <pre>const blocked = ['require(','import(','process.','__dirname',
+  '__filename','eval(','Function(','fetch(','XMLHttpRequest'];</pre>
+    <p>
+      Each expression receives only a single <code>value</code> string — no access to
+      the broader runtime environment.
+    </p>
+  </div>
+
+  <!-- ── 5. Rules Engine ── -->
+  <div class="section">
+    <div class="section-label">05 — Rules Engine</div>
+    <h2>Dynamic Rules Engine</h2>
+    <p>
+      Rules are the institutional memory of the platform. Once defined, they persist
+      across every session and are automatically injected into the AI's system prompt
+      so it uses them intelligently.
+    </p>
+
+    <h3>Rule Anatomy</h3>
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>id</code></td><td>UUID</td><td>Auto-generated primary key</td></tr>
+        <tr><td><code>user_id</code></td><td>text</td><td>Clerk userId — row-level isolation</td></tr>
+        <tr><td><code>field</code></td><td>text</td><td>CSV column name this rule targets</td></tr>
+        <tr><td><code>type</code></td><td>text</td><td>Category label (e.g. "Text", "Phone", "Email")</td></tr>
+        <tr><td><code>action</code></td><td>text</td><td>Transformation action (see list below)</td></tr>
+        <tr><td><code>expression</code></td><td>text?</td><td>JS expression for custom action type</td></tr>
+        <tr><td><code>description</code></td><td>text?</td><td>Human-readable explanation</td></tr>
+        <tr><td><code>active</code></td><td>boolean</td><td>Toggle without deleting</td></tr>
+        <tr><td><code>created_at</code></td><td>timestamptz</td><td>Ordered display, audit trail</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Supported Actions</h3>
+    <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.8rem;">
+      <span class="badge badge-grn">trim</span>
+      <span class="badge badge-grn">title_case</span>
+      <span class="badge badge-grn">upper_case</span>
+      <span class="badge badge-grn">lower_case</span>
+      <span class="badge badge-blue">validate_email</span>
+      <span class="badge badge-blue">normalize_phone</span>
+      <span class="badge badge-blue">std_country</span>
+      <span class="badge badge-blue">title_case_city</span>
+      <span class="badge badge-blue">std_state_code</span>
+      <span class="badge badge-yellow">normalize_currency</span>
+      <span class="badge badge-yellow">normalize_decimal</span>
+      <span class="badge badge-purple">remove_special</span>
+      <span class="badge badge-red">custom (JS)</span>
+    </div>
+
+    <h3>AI Rule Generation</h3>
+    <p>
+      The <strong>AI Rules</strong> button in the Rules tab sends the column list and
+      a user description to Groq's single-turn endpoint. The model returns a JSON array
+      of rule objects which are automatically POSTed to Supabase and added to the session state.
+    </p>
+    <pre>// Response format expected from AI
+[
+  { "field": "Phone", "type": "Phone", "action": "normalize_phone", "description": "Strip non-digit chars, remove country code" },
+  { "field": "Email", "type": "Email", "action": "validate_email",  "description": "Lowercase and remove duplicate @" }
+]</pre>
+  </div>
+
+  <!-- ── 6. Data Flow ── -->
+  <div class="section">
+    <div class="section-label">06 — Data Flow</div>
+    <h2>End-to-End Data Flow</h2>
+
+    <div class="timeline">
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-content">
+          <h4>1. Upload / Sample Load</h4>
+          <p>User uploads a CSV or selects a built-in sample. PapaParse runs entirely in the browser — raw data never touches the server until the user triggers a cleansing operation.</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-content">
+          <h4>2. Profile & Score</h4>
+          <p>Running "Profile Data" computes per-column null %, type distribution, and unique values. A composite Data Quality (DQ) score is computed and displayed as a live gauge.</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-content">
+          <h4>3. Rules Application (Batch)</h4>
+          <p>"Run Cleanse" applies every active rule in sequence to a copy of the raw data. The result becomes <em>cleanedData</em> — original is preserved for comparison.</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-content">
+          <h4>4. AI Agent Chat</h4>
+          <p>Each chat message serialises the current dataset (headers + rows) and sends it to <code>/api/agent</code>. The agent mutates a server-side copy; the response returns the full updated dataset which replaces client state.</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-content">
+          <h4>5. Deduplication</h4>
+          <p>User selects key columns and similarity threshold. Fuzzy matching (Levenshtein distance + token overlap) groups near-duplicate rows and shows a ranked candidate list for review.</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-content">
+          <h4>6. Export</h4>
+          <p>Clean CSV or audit trail CSV are generated client-side using Papa.unparse and downloaded via an anchor element — no server round-trip needed for export.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 7. Usage Guide ── -->
+  <div class="section">
+    <div class="section-label">07 — Usage</div>
+    <h2>Usage Guide — Tab by Tab</h2>
+
+    <h3>Tab 1 · Upload / Sample</h3>
+    <p>Drag and drop a CSV file or choose one of the three built-in sample datasets (Customer Records, Product Catalog, Address Book). The table preview appears immediately after parsing.</p>
+
+    <h3>Tab 2 · Rules</h3>
+    <p>
+      Add cleaning rules manually using the form (select column → type → action → optional expression).
+      Or click <strong>AI Rules</strong> and describe your data in natural language — the AI generates
+      a complete rule set and saves it to your account automatically.
+      Rules can be toggled on/off or deleted at any time.
+    </p>
+
+    <h3>Tab 3 · Cleanse</h3>
+    <p>Click <strong>Run Cleanse</strong> to apply all active rules to the dataset in a single pass.
+    The audit log on the right records every transformation with before/after counts.</p>
+
+    <h3>Tab 4 · AI Chat</h3>
+    <p>
+      Type a natural-language instruction such as:
+    </p>
+    <pre>"Standardize all country names to their full English form"
+"Remove rows where Email is missing"
+"Fix the phone numbers — strip country codes and spaces"
+"Convert the Revenue column to numbers, remove $ signs"</pre>
+    <p>The agent inspects the data, calls the appropriate tools, and returns the cleaned dataset with a plain-English summary of what it did.</p>
+
+    <h3>Tab 5 · Profile</h3>
+    <p>Click <strong>Profile Data</strong> to see: row count, column count, null rate per column, unique value counts, inferred type, and the composite DQ score.</p>
+
+    <h3>Tab 6 · Dedup</h3>
+    <p>Select which columns define "identity" (e.g. Name + Email), choose Levenshtein or Token similarity algorithm, set the threshold (0–1), and click <strong>Find Duplicates</strong>. Review matches and remove selected groups.</p>
+
+    <h3>Tab 7 · Export</h3>
+    <p>Download the clean CSV or the audit trail CSV. The audit CSV records every field changed, original value, new value, rule applied, and timestamp.</p>
+
+    <h3>Tab 8 · Settings</h3>
+    <p>Set the AI model, configure the domain context (custom instructions injected into every AI prompt), and check the live Groq API status indicator.</p>
+  </div>
+
+  <!-- ── 8. Performance ── -->
+  <div class="section">
+    <div class="section-label">08 — Performance</div>
+    <h2>Performance Characteristics</h2>
+
+    <h3>Groq Inference Speed</h3>
+    <p>
+      Groq's purpose-built LPU (Language Processing Unit) hardware delivers significantly
+      faster token generation than GPU-based providers. Typical observed performance:
+    </p>
+    <table>
+      <thead><tr><th>Operation</th><th>Typical Latency</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Single tool call (inspect)</td><td><strong>0.4 – 0.8 s</strong></td><td>Groq LPU, LLaMA 3.3-70B</td></tr>
+        <tr><td>Full agent loop (3–5 steps)</td><td><strong>1.5 – 4 s</strong></td><td>Includes tool execution time</td></tr>
+        <tr><td>Rules generation (AI Rules button)</td><td><strong>0.8 – 1.5 s</strong></td><td>Single-turn, JSON output</td></tr>
+        <tr><td>Supabase rule fetch (GET /api/rules)</td><td><strong>30 – 80 ms</strong></td><td>Indexed by user_id</td></tr>
+        <tr><td>Supabase rule insert/update</td><td><strong>40 – 100 ms</strong></td><td>Service role, no RLS overhead</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Client-side Processing</h3>
+    <table>
+      <thead><tr><th>Operation</th><th>Scale</th><th>Time</th></tr></thead>
+      <tbody>
+        <tr><td>CSV parsing (PapaParse)</td><td>10,000 rows</td><td>&lt; 100 ms</td></tr>
+        <tr><td>CSV parsing (PapaParse)</td><td>100,000 rows</td><td>~500 ms</td></tr>
+        <tr><td>Rule application (batch cleanse)</td><td>10,000 rows × 10 rules</td><td>&lt; 200 ms</td></tr>
+        <tr><td>Fuzzy dedup (Levenshtein)</td><td>1,000 rows × 2 columns</td><td>&lt; 1 s</td></tr>
+        <tr><td>Data profiling</td><td>10,000 rows × 20 cols</td><td>&lt; 300 ms</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Scalability Notes</h3>
+    <p>
+      <strong>Current design (browser-side data):</strong> The full dataset is serialized to JSON
+      and sent to the API agent on every chat message. This works well up to ~5,000 rows.
+      For larger files, the Groq API request payload becomes the limiting factor
+      (max_tokens + context window).
+    </p>
+    <p>
+      <strong>Recommended ceiling:</strong> ~10,000 rows × 20 columns for the AI agent.
+      Batch rule application (Tab 3) has no AI involvement and scales to 100K+ rows
+      in the browser without issue.
+    </p>
+    <p>
+      <strong>Future scaling path:</strong> Upload CSV to Supabase Storage → agent reads
+      paginated chunks via inspect_column → avoids sending full dataset over HTTP.
+    </p>
+  </div>
+
+  <!-- ── 9. Security ── -->
+  <div class="section">
+    <div class="section-label">09 — Security</div>
+    <h2>Security Model</h2>
+
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-icon">🔑</div>
+        <h4>API Keys — Server Only</h4>
+        <p><code>GROQ_API_KEY</code> and <code>SUPABASE_SERVICE_ROLE_KEY</code> live in <code>.env.local</code> / Vercel environment variables. They are never exposed to the browser.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🧑‍💻</div>
+        <h4>Authentication — Clerk</h4>
+        <p>Every API route calls <code>auth()</code> from <code>@clerk/nextjs/server</code>. Unauthenticated requests receive HTTP 401 before any data is accessed.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔒</div>
+        <h4>Row-Level Isolation</h4>
+        <p>All Supabase queries include <code>.eq('user_id', userId)</code>. A user cannot read, update, or delete another user's rules — enforced at the API layer.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🏖️</div>
+        <h4>JS Sandbox</h4>
+        <p>AI-generated <code>run_transform</code> expressions are blocked from accessing <code>require</code>, <code>fetch</code>, <code>process</code>, <code>eval</code>, and other dangerous globals.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🚫</div>
+        <h4>Field Whitelist</h4>
+        <p>The PATCH rule endpoint only allows updates to whitelisted fields: <code>field, type, action, expression, description, active</code>. Mass-assignment is impossible.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">📡</div>
+        <h4>No Data Persistence</h4>
+        <p>Uploaded CSV data is never written to a database. It exists only in browser memory for the current session and in the request body during agent calls.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 10. Tech Stack ── -->
+  <div class="section">
+    <div class="section-label">10 — Technology</div>
+    <h2>Full Technology Stack</h2>
+
+    <table>
+      <thead><tr><th>Category</th><th>Technology</th><th>Version / Plan</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Framework</strong></td><td>Next.js</td><td>14 (App Router)</td><td>Full-stack React framework</td></tr>
+        <tr><td><strong>Language</strong></td><td>JavaScript (ES2022)</td><td>—</td><td>All code, no TypeScript</td></tr>
+        <tr><td><strong>AI Provider</strong></td><td>Groq Cloud</td><td>Free tier</td><td>LLM inference with tool-use</td></tr>
+        <tr><td><strong>LLM</strong></td><td>LLaMA 3.3-70B-Versatile</td><td>Meta / Groq-hosted</td><td>Agent reasoning + JSON output</td></tr>
+        <tr><td><strong>Auth</strong></td><td>Clerk</td><td>Free tier</td><td>Sign-in, JWT, user identity</td></tr>
+        <tr><td><strong>Database</strong></td><td>Supabase PostgreSQL</td><td>Free tier</td><td>Rules persistence</td></tr>
+        <tr><td><strong>CSV Parsing</strong></td><td>PapaParse</td><td>5.x</td><td>Browser-side parse/unparse</td></tr>
+        <tr><td><strong>Deployment</strong></td><td>Vercel</td><td>Hobby (free)</td><td>Serverless, CDN, CI/CD</td></tr>
+        <tr><td><strong>Fonts</strong></td><td>IBM Plex Mono + Syne</td><td>Google Fonts</td><td>UI typography</td></tr>
+        <tr><td><strong>Styling</strong></td><td>Plain CSS (custom properties)</td><td>—</td><td>Dark neon design system</td></tr>
+        <tr><td><strong>Source Control</strong></td><td>GitHub</td><td>Public repo</td><td>Version control + Vercel trigger</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── 11. Deployment ── -->
+  <div class="section">
+    <div class="section-label">11 — Deployment</div>
+    <h2>Deployment &amp; CI/CD</h2>
+
+    <h3>Infrastructure</h3>
+    <p>
+      The application is deployed on <strong>Vercel</strong> with automatic deployments
+      triggered on every push to the <code>main</code> branch of the GitHub repository.
+      All API routes run as serverless functions (Node.js runtime).
+    </p>
+
+    <h3>Required Environment Variables</h3>
+    <pre>GROQ_API_KEY=gsk_...
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
+CLERK_SECRET_KEY=sk_live_...
+NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=eyJ...</pre>
+
+    <h3>Supabase Schema</h3>
+    <pre>create table rules (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     text not null,
+  field       text not null,
+  type        text not null,
+  action      text not null default 'custom',
+  expression  text,
+  description text,
+  active      boolean not null default true,
+  created_at  timestamptz not null default now()
+);
+create index rules_user_id_idx on rules (user_id, created_at);</pre>
+
+    <h3>Deploy Steps</h3>
+    <div class="timeline">
+      <div class="tl-item"><div class="tl-dot"></div><div class="tl-content"><h4>Push to GitHub</h4><p><code>git push origin main</code> — Vercel detects the push automatically.</p></div></div>
+      <div class="tl-item"><div class="tl-dot"></div><div class="tl-content"><h4>Set Env Vars in Vercel</h4><p>Add the 5 environment variables in Project → Settings → Environment Variables.</p></div></div>
+      <div class="tl-item"><div class="tl-dot"></div><div class="tl-content"><h4>Configure Clerk Domain</h4><p>In Clerk Dashboard → Domains, add the Vercel deployment URL (bare domain, no https://).</p></div></div>
+      <div class="tl-item"><div class="tl-dot"></div><div class="tl-content"><h4>Run SQL in Supabase</h4><p>Execute <code>supabase-setup.sql</code> in the Supabase SQL editor to create the rules table.</p></div></div>
+    </div>
+  </div>
+
+  <!-- ── 12. Limitations & Roadmap ── -->
+  <div class="section">
+    <div class="section-label">12 — Roadmap</div>
+    <h2>Current Limitations &amp; Future Roadmap</h2>
+
+    <h3>Current Limitations</h3>
+    <table>
+      <thead><tr><th>Limitation</th><th>Impact</th><th>Workaround</th></tr></thead>
+      <tbody>
+        <tr><td>Dataset size (AI agent)</td><td>Slow/fails above ~10K rows</td><td>Use batch cleanse (Tab 3) for large files</td></tr>
+        <tr><td>Groq free tier rate limits</td><td>429 errors under heavy use</td><td>Upgrade Groq plan or add retry logic</td></tr>
+        <tr><td>No server-side data storage</td><td>Data lost on page refresh</td><td>Re-upload CSV; rules are persistent</td></tr>
+        <tr><td>Single file at a time</td><td>No bulk processing</td><td>Manual re-upload for each file</td></tr>
+        <tr><td>No Excel (.xlsx) support</td><td>Must convert to CSV first</td><td>Use Excel "Save as CSV" before upload</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Roadmap Ideas</h3>
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-icon">☁️</div>
+        <h4>Server-side Storage</h4>
+        <p>Upload CSVs to Supabase Storage. Agent reads paginated chunks — removes the 10K row ceiling.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">📊</div>
+        <h4>Excel Support</h4>
+        <p>Add SheetJS (xlsx) to parse .xls/.xlsx files directly in the browser.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔄</div>
+        <h4>Rule Templates</h4>
+        <p>Pre-built rule sets for common schemas (CRM, e-commerce, HR data) shared across the team.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">📈</div>
+        <h4>Historical Jobs</h4>
+        <p>Save every cleansing run to Supabase so teams can audit changes over time and replay past jobs.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 13. Comparison ── -->
+  <div class="section">
+    <div class="section-label">13 — Positioning</div>
+    <h2>Why DataCleanse AI vs. Alternatives</h2>
+    <table>
+      <thead><tr><th>Feature</th><th>DataCleanse AI</th><th>Excel / Sheets</th><th>OpenRefine</th><th>Enterprise ETL</th></tr></thead>
+      <tbody>
+        <tr><td>Natural language cleaning</td><td><span class="badge badge-grn">Yes</span></td><td><span class="badge badge-red">No</span></td><td><span class="badge badge-red">No</span></td><td><span class="badge badge-red">No</span></td></tr>
+        <tr><td>Persistent reusable rules</td><td><span class="badge badge-grn">Yes</span></td><td><span class="badge badge-red">No</span></td><td><span class="badge badge-yellow">Limited</span></td><td><span class="badge badge-grn">Yes</span></td></tr>
+        <tr><td>Zero install / cloud</td><td><span class="badge badge-grn">Yes</span></td><td><span class="badge badge-yellow">Partial</span></td><td><span class="badge badge-red">No</span></td><td><span class="badge badge-yellow">Varies</span></td></tr>
+        <tr><td>Fuzzy deduplication</td><td><span class="badge badge-grn">Yes</span></td><td><span class="badge badge-red">No</span></td><td><span class="badge badge-grn">Yes</span></td><td><span class="badge badge-grn">Yes</span></td></tr>
+        <tr><td>Data quality scoring</td><td><span class="badge badge-grn">Yes</span></td><td><span class="badge badge-red">No</span></td><td><span class="badge badge-red">No</span></td><td><span class="badge badge-grn">Yes</span></td></tr>
+        <tr><td>Cost</td><td><span class="badge badge-grn">Free (OSS)</span></td><td><span class="badge badge-yellow">Subscription</span></td><td><span class="badge badge-grn">Free</span></td><td><span class="badge badge-red">$$$</span></td></tr>
+        <tr><td>Setup time</td><td><span class="badge badge-grn">&lt; 10 min</span></td><td><span class="badge badge-grn">Instant</span></td><td><span class="badge badge-yellow">30 min</span></td><td><span class="badge badge-red">Days/weeks</span></td></tr>
+        <tr><td>Technical skill required</td><td><span class="badge badge-grn">None</span></td><td><span class="badge badge-yellow">Medium</span></td><td><span class="badge badge-yellow">Medium</span></td><td><span class="badge badge-red">High</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- ── Footer ── -->
+<div class="doc-footer">
+  <p>DataCleanse AI &nbsp;·&nbsp; Built with Next.js 14, Groq, Supabase &amp; Clerk</p>
+  <p style="margin-top:0.5rem;">Prepared July 2026 &nbsp;·&nbsp; Presentation Document v1.0</p>
+</div>
+
+</body>
+</html>

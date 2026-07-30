@@ -1,0 +1,105 @@
+The big picture
+This is DataCleanseAI — a Next.js 14 (App Router) app that lets a signed-in user upload messy CSV/Excel/JSON data, clean it either with local JS rules or by chatting with a Groq-hosted LLM "agent" that has real tools to modify the data, then save results to Supabase. Three external services glue it together:
+
+Service	Role	Where
+Clerk	Auth (sign-in modal, session)	middleware.js, app/layout.js, every API route
+Groq	Fast LLM inference (Llama 3.3 etc.)	app/api/chat/route.js, app/api/agent/route.js
+Supabase	Postgres (rules, jobs, memory) + file storage	lib/supabaseAdmin.js, lib/memory.js
+Everything server-side runs as Next.js Route Handlers under app/api/*/route.js — no separate backend.
+
+1. Auth layer
+middleware.js — wraps every request (except static assets) in clerkMiddleware(). This is what makes auth() work inside API routes and lets Clerk redirect/gate pages.
+
+app/layout.js — the root HTML shell. Wraps the whole app in <ClerkProvider> so any component can use Clerk hooks/components (<SignedIn>, <SignInButton>, <UserButton>), and imports globals.css globally.
+
+Every API route starts with the same guard:
+
+
+const { userId } = await auth();
+if (!userId) return Response.json({ error: 'Not signed in.' }, { status: 401 });
+So nothing server-side works until you're signed in — that's the source of the 401 console errors you saw in the earlier screenshot (Groq status checks firing before Clerk finishes loading).
+
+2. Styling — app/globals.css
+Plain CSS, no framework. Defines the whole design system as CSS variables at the top (--bg, --surf, --grn, --mono font, etc.), then one class block per UI area: layout grid, sidebar nav (.ni), tabs, tables (.tbl), buttons (.btn-p/.btn-g/.btn-d), the AI chat panel (.ai-panel), and the .gd-* guide-card classes we added. Everything in page.js styles itself by referencing these classes — no CSS-in-JS.
+
+3. The main UI — app/page.js
+This one client component ('use client') is the entire frontend. It breaks into four layers:
+
+a) Static data (lines 8–92)
+TABS, TAB_LABELS, NAV_LABELS — the 9 sections (Guides, Ingest, Profile, Rules, Cleanse, Audit, Fuzzy Dedup, Database, Groq Setup) and their sidebar/tab-bar labels.
+GUIDES — the tutorial-card data we added, one entry per pipeline stage.
+GROQ_MODELS — dropdown options for the Setup tab.
+SAMPLES — three hardcoded messy datasets (customer/product/address) used by the "Sample Data" buttons, deliberately containing dirty values (mixed case, bad emails, inconsistent country names) to demonstrate cleaning.
+ACTIONS — the fixed vocabulary of rule actions (trim, title_case, validate_email, …).
+b) Pure helper functions (lines 74–127)
+These don't touch React state — they're plain data transforms:
+
+autoActions(col) — guesses which cleaning actions a column needs from its name (e.g. a column called "email" auto-gets validate_email).
+cleanseRow(row, headers, rules) — applies applyAction (imported from lib/agentTools.js) across a row, collects changes/issues, and scores a confidence 0.38–0.97 based on issue count. This powers the local, non-AI "Rule-Based Cleanse" path.
+levenshtein, tokenSim, stringSim — classic edit-distance and word-overlap similarity, combined 50/50 by default. Used only by Fuzzy Dedup.
+sessionId() — a random per-browser-tab ID shown in the sidebar footer (this is the one causing the pre-existing hydration warning, since Math.random() differs between server and client render).
+c) Component state & effects (lines 130–190ish)
+One Home() component holds everything in useState: the loaded dataset (rawData), cleanse results, audit log, rules, chat message arrays for two separate chat UIs (rules-chat and cleanse-chat), Groq connection status, dedup config/results, and past jobs. A single useEffect on mount calls checkGroq(), refreshJobs(), loadRules(), and now also hydrates guideVotes from localStorage.
+
+d) The eight tab bodies (rendered inside .content, from ~line 518 on)
+Tab	What happens	Backed by
+Guides	Static cards, no backend	client-only, guideVotes in localStorage
+Ingest	Drag-drop or sample-load → Papa Parse → rawData	client-only (Papaparse)
+Profile	runProfile() computes fill-rate/empty/unique/issues per column	client-only
+Rules	CRUD rules (manual inputs, or ask Groq in plain English)	/api/rules + /api/rules/[id], /api/chat
+Cleanse	The AI chat agent (primary) + optional local rule-cleanse (secondary, in a <details>)	/api/agent
+Audit	Flat log of every change/issue from the local rule-cleanse run	client-only
+Fuzzy Dedup	Pairwise similarity scan across chosen columns	client-only (stringSim)
+Database	Lists jobs saved to Supabase, with signed download links	/api/jobs
+Groq Setup	API key status, model picker, "domain context" textarea fed into the agent's system prompt	/api/groq/status
+Two separate chat UIs exist (aiRules() and aiChat()): the Rules chat asks Groq to output a JSON array of rule objects, which get POSTed to /api/rules one by one; the Cleanse chat sends the whole dataset to /api/agent, which is a real tool-calling loop, not a one-shot completion (see below).
+
+4. Shared cleaning logic — lib/agentTools.js
+Used by both the client's local rule engine and the server's AI agent, so behavior is identical either way.
+
+COUNTRY_MAP + applyAction(action, val) — the actual implementation behind every rule action (trim_whitespace, title_case, normalize_phone, std_country, …). Pure string-in/string-out functions.
+TOOL_DEFS — an array of OpenAI-style function-calling schemas (name, description, JSON-schema parameters) describing exactly what the Groq model is allowed to do: summarize_data, inspect_column, trim_whitespace, set_case, standardize_values, apply_rule, run_transform, remove_duplicate_rows, remove_rows_with_missing. This list is sent to Groq on every agent call.
+executeTool(name, args, state, userRules) — the actual executor. Given a tool name Groq chose and the arguments it supplied, this mutates state.rows (a working copy of the dataset) and returns a small JSON result that gets fed back to the model. Notably:
+run_transform lets the model write arbitrary JS per cell, but runExpression() blocks dangerous tokens (require(, eval(, process., fetch(, …) before new Function()-evaluating it — a real, code-enforced boundary, not just a prompt instruction.
+There's no "fill in missing data" tool at all — only delete/reformat/remap tools exist, so the model literally cannot fabricate values.
+5. The agent loop — app/api/agent/route.js
+This is the heart of the "AI Cleansing Agent" you just added the greeting for. Per request:
+
+Builds a system prompt (buildSystemPrompt) that lists the user's active custom rules and any "domain context" they typed in the Setup tab, plus fixed instructions ("always inspect_column before guessing a mapping", "never invent missing data", "reply in plain text when done").
+Sends { system prompt, prior conversation, new user message } to Groq along with TOOL_DEFS, tool_choice: 'auto'.
+Loop (up to 8 iterations, route.js:48): if Groq's reply contains tool_calls, run each one through executeTool() against the real in-memory dataset, append the tool's result back into the message array as a role: 'tool' message, and call Groq again. If Groq instead replies with plain text, that's the final answer — break out.
+Returns the mutated headers/rows, the final reply text, and a toolLog (every tool + args + result) — the frontend swaps this straight into rawData and shows the tool log under the chat bubble.
+This is genuinely agentic: one user message like "fix the emails and standardize state codes" can trigger inspect_column → standardize_values → apply_rule, chained automatically, because the model sees each tool's result before deciding the next step.
+
+6. Memory (learned corrections) — lib/memory.js
+Per-Clerk-user persistence of "things we've already fixed before," stored in Supabase's user_memory table (one row per user, two JSONB columns):
+
+loadMemory / saveMemory — read/write that row.
+learnFromActions(userId, actions) — called from /api/jobs/save after you save a cleaned file; converts the agent's toolLog (which columns got trimmed/cased/remapped) into columnSettings + valueCorrections and merges them in.
+applyMemoryToAnalysis — exists for an older wizard-style flow (not currently wired into the chat agent path) that would pre-fill known fixes into a fresh analysis.
+7. Supabase access — lib/supabaseAdmin.js
+A lazily-created singleton Supabase client authenticated with the service_role key (server-only, bypasses Row-Level Security). Access control is enforced entirely in the API routes by checking auth().userId and filtering every query with .eq('user_id', userId) — not by Postgres policies. That's documented explicitly in supabase-setup.sql:23-28.
+
+Schema (supabase-setup.sql):
+
+user_memory — one row per user, column_settings + value_corrections JSONB.
+jobs — one row per saved cleanse ("filename", row_count, correction_plan, cleaned_file_path).
+rules — one row per user-defined cleansing rule (field, type, action, expression, active).
+8. The rest of the API routes
+app/api/chat/route.js — a plain one-shot Groq completion (no tools, no loop). Used by the Rules tab's "Ask Groq to Generate Rules" box: sends a system prompt asking for a JSON array of rule objects, the client parses the JSON out of the reply and saves each one via /api/rules.
+app/api/groq/status/route.js — health check hit on page load; pings Groq's /models endpoint and returns online/no_key/error, which drives the badge in the header.
+app/api/jobs/route.js — lists the signed-in user's saved jobs, generating a 1-hour signed download URL per file from Supabase Storage.
+app/api/jobs/save/route.js — uploads a cleaned CSV to the cleaned-files bucket, inserts a jobs row, and calls learnFromActions so the memory system picks up what the agent just did.
+app/api/rules/route.js / app/api/rules/[id]/route.js — standard CRUD for the rules table, each scoped to user_id.
+9. A full request, start to finish
+Say you sign in, click Customer Master sample, go to Cleanse, and type "fix the emails":
+
+loadSample('customer') (page.js) sets rawData from the hardcoded SAMPLES.customer.
+You switch to Cleanse → aiChat() fires, converting rawData.rows (arrays) into objects keyed by header, and POSTs to /api/agent with the message, prior agentHistory, your active rules, and systemContext.
+/api/agent builds the system prompt, sends it + TOOL_DEFS to Groq.
+Groq decides to call inspect_column({ column: "Email" }) → executeTool returns sample values + missing count → fed back to Groq.
+Groq then calls run_transform or apply_rule with a fix → executeTool mutates state.rows in place.
+Groq replies in plain text ("Fixed 3 malformed email addresses.") → loop breaks.
+Response returns the new headers/rows/toolLog; the client rebuilds rawData and appends the reply + tool-log summary to cleanseMsgs.
+If you then click "Save to your account" (not shown in the snippet but implied by /api/jobs/save), the CSV uploads to Supabase Storage, a jobs row is created, and learnFromActions folds the toolLog into user_memory for next time.
+That's the whole system — a single-page React client, a Groq tool-calling loop as the "brain," a small fixed set of code-enforced data operations as its "hands," and Supabase/Clerk for persistence and identity.
