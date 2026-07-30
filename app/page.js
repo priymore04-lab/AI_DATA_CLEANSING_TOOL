@@ -183,6 +183,7 @@ export default function Home() {
   const [dedupMsg, setDedupMsg] = useState('');
   const [dedupRemoveResult, setDedupRemoveResult] = useState(null);
   const [dedupMode, setDedupMode] = useState('exact');
+  const [dedupPreview, setDedupPreview] = useState(null);
 
   // Drag state
   const [dragging, setDragging] = useState(false);
@@ -236,7 +237,7 @@ export default function Home() {
     setRawData(s);
     setStats({ total: s.rows.length, issues: 0, fixed: 0, review: 0 });
     setDedupCols(s.headers.map(() => false));
-    setDedupResults(null); setDedupRemoveResult(null); setDedupMsg('');
+    setDedupResults(null); setDedupRemoveResult(null); setDedupMsg(''); setDedupPreview(null);
     setCleanedData([]); setAuditEntries([]); setDqScore(null);
     setAgentHistory([]);
     setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
@@ -252,7 +253,7 @@ export default function Home() {
         setRawData({ headers, rows });
         setStats({ total: rows.length, issues: 0, fixed: 0, review: 0 });
         setDedupCols(headers.map(() => false));
-        setDedupResults(null); setDedupRemoveResult(null); setDedupMsg('');
+        setDedupResults(null); setDedupRemoveResult(null); setDedupMsg(''); setDedupPreview(null);
         setCleanedData([]); setAuditEntries([]); setDqScore(null);
         setAgentHistory([]);
         setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
@@ -445,28 +446,41 @@ export default function Home() {
     }, 300);
   }
 
-  function removeExactDuplicates() {
+  function previewExactDuplicates() {
     if (!rawData) return;
     const { headers, rows } = rawData;
     const activeCols = dedupCols.map((c, i) => c ? i : -1).filter(i => i >= 0);
     const colIdxs = activeCols.length ? activeCols : headers.map((_, i) => i);
-    const seen = new Set();
-    const deduped = [];
-    for (const r of rows) {
-      const key = colIdxs.map(ci => r[ci] ?? '').join('');
-      if (seen.has(key)) continue;
-      seen.add(key);
-      deduped.push(r);
-    }
+    const seen = new Map();
+    const annotated = rows.map((row, idx) => {
+      const key = colIdxs.map(ci => row[ci] ?? '').join('');
+      const isDup = seen.has(key);
+      const firstIdx = isDup ? seen.get(key) : idx;
+      if (!isDup) seen.set(key, idx);
+      return { idx, row, isDup, firstIdx, key };
+    });
+    const dupKeys = new Set(annotated.filter(a => a.isDup).map(a => a.key));
+    const top = annotated.filter(a => dupKeys.has(a.key)).sort((a, b) => a.firstIdx - b.firstIdx || a.idx - b.idx);
+    const rest = annotated.filter(a => !dupKeys.has(a.key));
+    setDedupPreview({
+      cols: activeCols.length ? activeCols.map(i => headers[i]) : null,
+      ordered: [...top, ...rest],
+      dupCount: top.filter(a => a.isDup).length,
+    });
+    setDedupRemoveResult(null);
+  }
+
+  function removeExactDuplicates() {
+    if (!rawData || !dedupPreview) return;
+    const { headers, rows } = rawData;
+    const dupIdxSet = new Set(dedupPreview.ordered.filter(a => a.isDup).map(a => a.idx));
+    const deduped = rows.filter((_, idx) => !dupIdxSet.has(idx));
     const removed = rows.length - deduped.length;
     setRawData({ headers, rows: deduped });
     setStats(s => ({ ...s, total: deduped.length }));
     setDedupResults(null);
-    setDedupRemoveResult({
-      removed,
-      remaining: deduped.length,
-      cols: activeCols.length ? activeCols.map(i => headers[i]) : null,
-    });
+    setDedupRemoveResult({ removed, remaining: deduped.length, cols: dedupPreview.cols });
+    setDedupPreview(null);
   }
 
   // ── Rules (DB-backed) ─────────────────────────────────────
@@ -903,7 +917,10 @@ export default function Home() {
                     {rawData ? rawData.headers.map((h, i) => (
                       <label key={h} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontFamily: 'var(--mono)', cursor: 'pointer', color: 'var(--txt)' }}>
                         <input type="checkbox" checked={dedupCols[i] || false}
-                          onChange={e => setDedupCols(c => { const n = [...c]; n[i] = e.target.checked; return n; })} />
+                          onChange={e => {
+                            setDedupCols(c => { const n = [...c]; n[i] = e.target.checked; return n; });
+                            setDedupPreview(null); setDedupRemoveResult(null);
+                          }} />
                         {h}
                       </label>
                     )) : <span style={{ color: 'var(--mut)', fontSize: 11, fontFamily: 'var(--mono)' }}>Load data first to see columns</span>}
@@ -933,20 +950,62 @@ export default function Home() {
 
                   <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
                     {dedupMode === 'exact'
-                      ? <button className="btn btn-d" onClick={removeExactDuplicates} disabled={dedupBusy || !rawData}>🗑️ Remove Duplicates</button>
+                      ? <>
+                          <button className="btn btn-p" onClick={previewExactDuplicates} disabled={dedupBusy || !rawData}>🔍 Preview Duplicates</button>
+                          <button className="btn btn-d" onClick={removeExactDuplicates} disabled={dedupBusy || !rawData || !dedupPreview || dedupPreview.dupCount === 0}>🗑️ Remove Duplicates</button>
+                        </>
                       : <button className="btn btn-p" onClick={runDedup} disabled={dedupBusy || !rawData}>🔁 Find Duplicates</button>}
                     <span style={{ fontSize: 11, color: 'var(--mut)' }}>{dedupMsg}</span>
                   </div>
                 </div>
 
                 {dedupMode === 'exact' && (
-                  dedupRemoveResult
-                    ? <div className="info" style={{ marginBottom: 16 }}>
+                  <>
+                    {dedupRemoveResult && (
+                      <div className="info" style={{ marginBottom: 16 }}>
                         Removed <strong>{dedupRemoveResult.removed}</strong> duplicate row(s) based on{' '}
                         <strong>{dedupRemoveResult.cols ? dedupRemoveResult.cols.join(', ') : 'all columns (exact row match)'}</strong>.
                         {' '}{dedupRemoveResult.remaining} row(s) remain.
                       </div>
-                    : <div className="info">Select columns above (optional) and click "Remove Duplicates" to delete exact-match rows.</div>
+                    )}
+
+                    {!dedupRemoveResult && dedupPreview && (
+                      dedupPreview.dupCount === 0
+                        ? <div className="info">No exact duplicates found on the selected columns.</div>
+                        : <>
+                            <div className="info" style={{ marginBottom: 12 }}>
+                              Found <strong>{dedupPreview.dupCount}</strong> duplicate row(s) based on{' '}
+                              <strong>{dedupPreview.cols ? dedupPreview.cols.join(', ') : 'all columns (exact row match)'}</strong> —
+                              duplicate rows are listed first below and highlighted in red. Click "Remove Duplicates" to delete them, keeping the first occurrence of each.
+                            </div>
+                            <div className="tbl-wrap"><div className="tbl-scroll">
+                              <table className="tbl">
+                                <thead><tr>
+                                  <th>Status</th>
+                                  {rawData.headers.map(h => <th key={h}>{h}</th>)}
+                                </tr></thead>
+                                <tbody>{dedupPreview.ordered.slice(0, 300).map(a => (
+                                  <tr key={a.idx} style={a.isDup ? { background: '#ef444415' } : undefined}>
+                                    <td>{a.isDup
+                                      ? <span style={{ color: 'var(--red)', fontWeight: 700 }}>🔴 Duplicate of #{a.firstIdx + 1}</span>
+                                      : <span style={{ color: 'var(--mut)' }}>Row #{a.idx + 1}</span>}</td>
+                                    {a.row.map((c, j) => <td key={j}>{c || <span className="ce">∅</span>}</td>)}
+                                  </tr>
+                                ))}</tbody>
+                              </table>
+                            </div></div>
+                            {dedupPreview.ordered.length > 300 && (
+                              <div style={{ fontSize: 11, color: 'var(--mut)', marginTop: 6 }}>
+                                Showing first 300 of {dedupPreview.ordered.length} rows.
+                              </div>
+                            )}
+                          </>
+                    )}
+
+                    {!dedupRemoveResult && !dedupPreview && (
+                      <div className="info">Select columns above (optional) and click "Preview Duplicates" to see which rows would be removed, listed first.</div>
+                    )}
+                  </>
                 )}
 
                 {dedupMode === 'fuzzy' && (
