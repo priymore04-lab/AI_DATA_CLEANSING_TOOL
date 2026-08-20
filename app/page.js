@@ -185,6 +185,7 @@ export default function Home() {
   const [dedupRemoveResult, setDedupRemoveResult] = useState(null);
   const [dedupMode, setDedupMode] = useState('exact');
   const [dedupPreview, setDedupPreview] = useState(null);
+  const [dedupFuzzyRemoveResult, setDedupFuzzyRemoveResult] = useState(null);
 
   // Drag state
   const [dragging, setDragging] = useState(false);
@@ -238,7 +239,7 @@ export default function Home() {
     setRawData(s);
     setStats({ total: s.rows.length, issues: 0, fixed: 0, review: 0 });
     setDedupCols(s.headers.map(() => false));
-    setDedupResults(null); setDedupRemoveResult(null); setDedupMsg(''); setDedupPreview(null);
+    setDedupResults(null); setDedupRemoveResult(null); setDedupMsg(''); setDedupPreview(null); setDedupFuzzyRemoveResult(null);
     setCleanedData([]); setAuditEntries([]); setDqScore(null);
     setAgentHistory([]);
     setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
@@ -256,7 +257,7 @@ export default function Home() {
         setRawData({ headers, rows });
         setStats({ total: rows.length, issues: 0, fixed: 0, review: 0 });
         setDedupCols(headers.map(() => false));
-        setDedupResults(null); setDedupRemoveResult(null); setDedupMsg(''); setDedupPreview(null);
+        setDedupResults(null); setDedupRemoveResult(null); setDedupMsg(''); setDedupPreview(null); setDedupFuzzyRemoveResult(null);
         setCleanedData([]); setAuditEntries([]); setDqScore(null);
         setAgentHistory([]);
         setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
@@ -487,7 +488,7 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
   // ── Fuzzy Dedup ──────────────────────────────────────────
   function runDedup() {
     if (!rawData) return;
-    setDedupBusy(true); setDedupMsg('');
+    setDedupBusy(true); setDedupMsg(''); setDedupFuzzyRemoveResult(null);
     setTimeout(() => {
       const { headers, rows } = rawData;
       const activeCols = dedupCols.map((c, i) => c ? i : -1).filter(i => i >= 0);
@@ -544,6 +545,18 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
     setDedupResults(null);
     setDedupRemoveResult({ removed, remaining: deduped.length, cols: dedupPreview.cols });
     setDedupPreview(null);
+  }
+
+  function removeFuzzyDuplicates() {
+    if (!rawData || !dedupResults) return;
+    const { headers, rows } = rawData;
+    const dupIdxSet = new Set(dedupResults.pairs.map(p => p.j));
+    const deduped = rows.filter((_, idx) => !dupIdxSet.has(idx));
+    const removed = rows.length - deduped.length;
+    setRawData({ headers, rows: deduped });
+    setStats(s => ({ ...s, total: deduped.length }));
+    setDedupResults(null);
+    setDedupFuzzyRemoveResult({ removed, remaining: deduped.length });
   }
 
   // ── Rules (DB-backed) ─────────────────────────────────────
@@ -1029,7 +1042,10 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                           <button className="btn btn-p" onClick={previewExactDuplicates} disabled={dedupBusy || !rawData}>🔍 Preview Duplicates</button>
                           <button className="btn btn-d" onClick={removeExactDuplicates} disabled={dedupBusy || !rawData || !dedupPreview || dedupPreview.dupCount === 0}>🗑️ Remove Duplicates</button>
                         </>
-                      : <button className="btn btn-p" onClick={runDedup} disabled={dedupBusy || !rawData}>🔁 Find Duplicates</button>}
+                      : <>
+                          <button className="btn btn-p" onClick={runDedup} disabled={dedupBusy || !rawData}>🔁 Find Duplicates</button>
+                          <button className="btn btn-d" onClick={removeFuzzyDuplicates} disabled={dedupBusy || !rawData || !dedupResults || dedupResults.pairs.length === 0}>🗑️ Remove Flagged Duplicates</button>
+                        </>}
                     <span style={{ fontSize: 11, color: 'var(--mut)' }}>{dedupMsg}</span>
                   </div>
                 </div>
@@ -1037,11 +1053,29 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                 {dedupMode === 'exact' && (
                   <>
                     {dedupRemoveResult && (
-                      <div className="info" style={{ marginBottom: 16 }}>
-                        Removed <strong>{dedupRemoveResult.removed}</strong> duplicate row(s) based on{' '}
-                        <strong>{dedupRemoveResult.cols ? dedupRemoveResult.cols.join(', ') : 'all columns (exact row match)'}</strong>.
-                        {' '}{dedupRemoveResult.remaining} row(s) remain.
-                      </div>
+                      <>
+                        <div className="info" style={{ marginBottom: 16 }}>
+                          Removed <strong>{dedupRemoveResult.removed}</strong> duplicate row(s) based on{' '}
+                          <strong>{dedupRemoveResult.cols ? dedupRemoveResult.cols.join(', ') : 'all columns (exact row match)'}</strong>.
+                          {' '}{dedupRemoveResult.remaining} row(s) remain.
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                          <button className="btn btn-g btn-sm" onClick={() => { const csv = Papa.unparse({ fields: rawData.headers, data: rawData.rows }); download(csv, 'deduplicated_data.csv'); }}>↓ Download Deduplicated CSV</button>
+                        </div>
+                        <div className="tbl-wrap"><div className="tbl-scroll">
+                          <table className="tbl">
+                            <thead><tr>{rawData.headers.map(h => <th key={h}>{h}</th>)}</tr></thead>
+                            <tbody>{rawData.rows.slice(0, 300).map((row, idx) => (
+                              <tr key={idx}>{row.map((c, j) => <td key={j}>{c || <span className="ce">∅</span>}</td>)}</tr>
+                            ))}</tbody>
+                          </table>
+                        </div></div>
+                        {rawData.rows.length > 300 && (
+                          <div style={{ fontSize: 11, color: 'var(--mut)', marginTop: 6 }}>
+                            Showing first 300 of {rawData.rows.length} row(s).
+                          </div>
+                        )}
+                      </>
                     )}
 
                     {!dedupRemoveResult && dedupPreview && (
@@ -1084,7 +1118,30 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                 )}
 
                 {dedupMode === 'fuzzy' && (
-                  dedupResults ? (
+                  dedupFuzzyRemoveResult ? (
+                    <>
+                      <div className="info" style={{ marginBottom: 16 }}>
+                        Removed <strong>{dedupFuzzyRemoveResult.removed}</strong> duplicate row(s) flagged above the similarity threshold, keeping the first occurrence of each cluster.
+                        {' '}{dedupFuzzyRemoveResult.remaining} row(s) remain.
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                        <button className="btn btn-g btn-sm" onClick={() => { const csv = Papa.unparse({ fields: rawData.headers, data: rawData.rows }); download(csv, 'deduplicated_data.csv'); }}>↓ Download Deduplicated CSV</button>
+                      </div>
+                      <div className="tbl-wrap"><div className="tbl-scroll">
+                        <table className="tbl">
+                          <thead><tr>{rawData.headers.map(h => <th key={h}>{h}</th>)}</tr></thead>
+                          <tbody>{rawData.rows.slice(0, 300).map((row, idx) => (
+                            <tr key={idx}>{row.map((c, j) => <td key={j}>{c || <span className="ce">∅</span>}</td>)}</tr>
+                          ))}</tbody>
+                        </table>
+                      </div></div>
+                      {rawData.rows.length > 300 && (
+                        <div style={{ fontSize: 11, color: 'var(--mut)', marginTop: 6 }}>
+                          Showing first 300 of {rawData.rows.length} row(s).
+                        </div>
+                      )}
+                    </>
+                  ) : dedupResults ? (
                     <>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 16 }}>
                         {[
