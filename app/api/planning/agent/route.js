@@ -73,7 +73,7 @@ export async function POST(req) {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: model || 'llama-3.3-70b-versatile',
+          model: model || 'openai/gpt-oss-120b',
           max_tokens: 2000,
           messages,
           tools: PLANNING_TOOL_DEFS,

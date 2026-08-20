@@ -38,11 +38,10 @@ const GUIDES = [
 ];
 
 const GROQ_MODELS = [
-  { id: 'llama-3.3-70b-versatile', label: 'llama-3.3-70b-versatile (recommended — best quality)' },
+  { id: 'openai/gpt-oss-120b', label: 'openai/gpt-oss-120b (recommended — best quality)' },
+  { id: 'openai/gpt-oss-20b', label: 'openai/gpt-oss-20b (fast, lighter weight)' },
+  { id: 'qwen/qwen3.6-27b', label: 'qwen/qwen3.6-27b (multimodal, tool use)' },
   { id: 'llama-3.1-8b-instant', label: 'llama-3.1-8b-instant (fastest, low latency)' },
-  { id: 'llama3-70b-8192', label: 'llama3-70b-8192 (Meta — very accurate)' },
-  { id: 'mixtral-8x7b-32768', label: 'mixtral-8x7b-32768 (large context window)' },
-  { id: 'gemma2-9b-it', label: 'gemma2-9b-it (Google — efficient)' },
 ];
 
 const SAMPLES = {
@@ -155,7 +154,7 @@ export default function Home() {
   const [rulesLoading, setRulesLoading] = useState(true);
   const [stats, setStats] = useState({ total: 0, issues: 0, fixed: 0, review: 0 });
   const [dqScore, setDqScore] = useState(null);
-  const [currentModel, setCurrentModel] = useState('llama-3.3-70b-versatile');
+  const [currentModel, setCurrentModel] = useState('openai/gpt-oss-120b');
   const [systemContext, setSystemContext] = useState('');
   const [groqStatus, setGroqStatus] = useState('checking'); // 'online'|'offline'|'no_key'|'checking'
   const [groqModels, setGroqModels] = useState([]);
@@ -1218,11 +1217,10 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                     <thead><tr><th>Model</th><th>Context</th><th>Speed</th><th>Best For</th></tr></thead>
                     <tbody>
                       {[
-                        ['llama-3.3-70b-versatile ★','128k','Fast','General cleansing (recommended)','var(--grn)'],
+                        ['openai/gpt-oss-120b ★','128k','Fast','General cleansing (recommended)','var(--grn)'],
+                        ['openai/gpt-oss-20b','128k','Faster','Lighter weight tasks'],
+                        ['qwen/qwen3.6-27b','128k','Fast','Multimodal, tool use'],
                         ['llama-3.1-8b-instant','128k','Fastest','Low-latency tasks'],
-                        ['llama3-70b-8192','8k','Fast','Complex reasoning'],
-                        ['mixtral-8x7b-32768','32k','Fast','Large context tasks'],
-                        ['gemma2-9b-it','8k','Very fast','Efficient, good quality'],
                       ].map(([name, ctx, speed, best, color]) => (
                         <tr key={name}><td style={color ? { color } : {}}>{name}</td><td>{ctx}</td><td>{speed}</td><td>{best}</td></tr>
                       ))}

@@ -124,7 +124,7 @@ AI agent that orchestrates multiple planning tools.
   "message": "I want to build a web app for data cleaning with AI",
   "history": [],
   "projectId": "uuid-here",
-  "model": "llama-3.3-70b-versatile"
+  "model": "openai/gpt-oss-120b"
 }
 ```
 

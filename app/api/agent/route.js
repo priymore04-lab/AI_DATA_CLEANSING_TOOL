@@ -59,7 +59,7 @@ export async function POST(req) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          model: model || 'llama-3.3-70b-versatile',
+          model: model || 'openai/gpt-oss-120b',
           max_tokens: 1500,
           messages,
           tools: hasData ? TOOL_DEFS : undefined,

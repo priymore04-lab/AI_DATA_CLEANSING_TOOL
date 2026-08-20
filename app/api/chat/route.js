@@ -17,7 +17,7 @@ export async function POST(req) {
     const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: model || 'llama-3.3-70b-versatile', messages, max_tokens: 800, temperature: 0.2 }),
+      body: JSON.stringify({ model: model || 'openai/gpt-oss-120b', messages, max_tokens: 800, temperature: 0.2 }),
     });
     const d = await r.json();
     if (!r.ok) return Response.json({ error: d?.error?.message || 'Groq API error.' }, { status: r.status });
