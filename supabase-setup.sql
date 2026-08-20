@@ -44,3 +44,18 @@ create table if not exists rules (
   created_at timestamptz not null default now()
 );
 create index if not exists rules_user_id_idx on rules (user_id, created_at);
+
+create table if not exists migration_objects (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null,
+  name text not null,
+  description text,
+  target_fields jsonb not null default '[]'::jsonb,
+  -- [{ name, type: 'text'|'number'|'date'|'email', required, pattern, allowed_values }]
+  default_mapping jsonb,
+  -- [{ target_field, source_column, action }] saved after a successful load,
+  -- so the same source file shape can be re-mapped instantly next time
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists migration_objects_user_id_idx on migration_objects (user_id, created_at desc);

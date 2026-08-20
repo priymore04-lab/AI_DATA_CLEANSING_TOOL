@@ -6,16 +6,16 @@ import Papa from 'papaparse';
 import { applyAction, COUNTRY_MAP } from '@/lib/agentTools';
 
 // ── Constants ────────────────────────────────────────────
-const TABS = ['guides','ingest','profile','rules','cleanse','audit','dedup','db','setup'];
+const TABS = ['guides','ingest','profile','rules','cleanse','audit','dedup','migrate','db','setup'];
 const TAB_LABELS = {
   guides:'📖 Guides', ingest:'📂 Ingest', profile:'🔍 Profile', rules:'⚙️ Rules',
   cleanse:'⚡ Cleanse', audit:'📋 Audit', dedup:'🔁 Duplicates',
-  db:'🗄️ Database', setup:'🤖 Groq Setup',
+  migrate:'🎯 Migration Objects', db:'🗄️ Database', setup:'🤖 Groq Setup',
 };
 const NAV_LABELS = {
   guides:'📖 Guides', ingest:'📂 Ingest', profile:'🔍 Profile', rules:'⚙️ Rules',
   cleanse:'⚡ AI Cleanse', audit:'📋 Audit Log', dedup:'🔁 Duplicates',
-  db:'🗄️ Database', setup:'🤖 Groq Setup',
+  migrate:'🎯 Migration Objects', db:'🗄️ Database', setup:'🤖 Groq Setup',
 };
 
 const GUIDES = [
@@ -31,6 +31,8 @@ const GUIDES = [
     desc:'Every change and flagged issue is logged with a timestamp, field, before/after value, and confidence score so you can trace exactly what the pipeline changed and why.' },
   { id:'dedup', tab:'dedup', icon:'🔁', title:'Duplicate Detection', level:'Intermediate', duration:'4 min',
     desc:'Two modes: Check Duplicates removes exact-match rows based on just the fields you select; Fuzzy Duplicates compares columns with Levenshtein, token, or combined similarity and a threshold to surface near-duplicate records that exact matching would miss.' },
+  { id:'migrate', tab:'migrate', icon:'🎯', title:'Migration Objects', level:'Advanced', duration:'6 min',
+    desc:'SAP-style target schemas: define a named object with required target fields, map your loaded columns to them with a transform, validate every row against the target rules, then load only the passing rows — with the mapping saved for reuse next time.' },
   { id:'db', tab:'db', icon:'🗄️', title:'Saved Data History', level:'Beginner', duration:'1 min',
     desc:'Click "💾 Save to Database" after uploading, AI cleansing, rule cleansing, or removing duplicates to store the dataset in your account — with row counts, status, an inline preview, and re-download from past runs.' },
   { id:'setup', tab:'setup', icon:'🤖', title:'Configuring Groq', level:'Beginner', duration:'3 min',
@@ -190,12 +192,21 @@ export default function Home() {
   const [dedupPreview, setDedupPreview] = useState(null);
   const [dedupFuzzyRemoveResult, setDedupFuzzyRemoveResult] = useState(null);
 
+  // Migration Objects
+  const [migrationObjects, setMigrationObjects] = useState([]);
+  const [selectedMigObjId, setSelectedMigObjId] = useState('');
+  const [migObjForm, setMigObjForm] = useState(null); // { id, name, description, target_fields } while creating/editing
+  const [fieldMapping, setFieldMapping] = useState([]); // [{ target_field, source_column, action }]
+  const [migValidation, setMigValidation] = useState(null);
+  const [migBusy, setMigBusy] = useState(false);
+  const [migMsg, setMigMsg] = useState('');
+
   // Drag state
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
-    checkGroq(); refreshJobs(); loadRules();
+    checkGroq(); refreshJobs(); loadRules(); refreshMigrationObjects();
     try { setGuideVotes(JSON.parse(localStorage.getItem('dcai_guide_votes') || '{}')); } catch {}
   }, []);
 
@@ -615,6 +626,175 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
   // ── Jobs ─────────────────────────────────────────────────
   function refreshJobs() {
     fetch('/api/jobs').then(r => r.json()).then(d => setPastJobs(d.jobs || [])).catch(() => {});
+  }
+
+  // ── Migration Objects ────────────────────────────────────
+  function refreshMigrationObjects() {
+    fetch('/api/migration-objects').then(r => r.json()).then(d => setMigrationObjects(d.migrationObjects || [])).catch(() => {});
+  }
+
+  function startNewMigObj() {
+    setMigObjForm({ id: null, name: '', description: '', target_fields: [] });
+  }
+  function editMigObj(obj) {
+    setMigObjForm({ id: obj.id, name: obj.name, description: obj.description || '', target_fields: (obj.target_fields || []).map(f => ({ ...f })) });
+  }
+  function cancelMigObjForm() { setMigObjForm(null); }
+  function addTargetFieldRow() {
+    setMigObjForm(f => ({ ...f, target_fields: [...f.target_fields, { name: '', type: 'text', required: false, pattern: '', allowed_values: '' }] }));
+  }
+  function updateTargetFieldRow(i, patch) {
+    setMigObjForm(f => ({ ...f, target_fields: f.target_fields.map((tf, idx) => idx === i ? { ...tf, ...patch } : tf) }));
+  }
+  function removeTargetFieldRow(i) {
+    setMigObjForm(f => ({ ...f, target_fields: f.target_fields.filter((_, idx) => idx !== i) }));
+  }
+
+  async function saveMigObj() {
+    if (!migObjForm.name.trim()) { setMigMsg('✗ Name is required.'); return; }
+    const cleanFields = migObjForm.target_fields
+      .filter(f => f.name.trim())
+      .map(f => ({ name: f.name.trim(), type: f.type, required: !!f.required, pattern: (f.pattern || '').trim(), allowed_values: (f.allowed_values || '').trim() }));
+    setMigBusy(true); setMigMsg('Saving…');
+    try {
+      const isNew = !migObjForm.id;
+      const r = await fetch(isNew ? '/api/migration-objects' : `/api/migration-objects/${migObjForm.id}`, {
+        method: isNew ? 'POST' : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: migObjForm.name.trim(), description: migObjForm.description.trim(), target_fields: cleanFields }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Save failed.');
+      setMigMsg('✓ Saved.');
+      setMigObjForm(null);
+      refreshMigrationObjects();
+    } catch (err) {
+      setMigMsg('✗ ' + err.message);
+    }
+    setMigBusy(false);
+  }
+
+  async function deleteMigObj(id) {
+    setMigBusy(true); setMigMsg('Deleting…');
+    try {
+      const r = await fetch(`/api/migration-objects/${id}`, { method: 'DELETE' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Delete failed.');
+      if (selectedMigObjId === id) { setSelectedMigObjId(''); setFieldMapping([]); setMigValidation(null); }
+      setMigMsg('✓ Deleted.');
+      refreshMigrationObjects();
+    } catch (err) {
+      setMigMsg('✗ ' + err.message);
+    }
+    setMigBusy(false);
+  }
+
+  function suggestSourceColumn(targetName, headers) {
+    const t = targetName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!t) return '';
+    let partial = '';
+    for (const h of headers) {
+      const hn = h.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (hn === t) return h;
+      if (!partial && (hn.includes(t) || t.includes(hn))) partial = h;
+    }
+    return partial;
+  }
+
+  function buildFieldMapping(obj, headers) {
+    const dm = obj.default_mapping || [];
+    return (obj.target_fields || []).map(tf => {
+      const saved = dm.find(m => m.target_field === tf.name);
+      const source_column = saved?.source_column && headers.includes(saved.source_column)
+        ? saved.source_column
+        : suggestSourceColumn(tf.name, headers);
+      return { target_field: tf.name, source_column: source_column || '', action: saved?.action || autoActions(tf.name).slice(-1)[0] || 'trim' };
+    });
+  }
+
+  function selectMigObj(id) {
+    setSelectedMigObjId(id);
+    setMigValidation(null); setMigMsg('');
+    const obj = migrationObjects.find(o => o.id === id);
+    setFieldMapping(obj && rawData ? buildFieldMapping(obj, rawData.headers) : []);
+  }
+
+  function reSuggestMapping() {
+    const obj = migrationObjects.find(o => o.id === selectedMigObjId);
+    if (obj && rawData) setFieldMapping(buildFieldMapping(obj, rawData.headers));
+    setMigValidation(null);
+  }
+
+  function updateMapping(i, patch) {
+    setFieldMapping(m => m.map((row, idx) => idx === i ? { ...row, ...patch } : row));
+    setMigValidation(null);
+  }
+
+  function validateMigration() {
+    const obj = migrationObjects.find(o => o.id === selectedMigObjId);
+    if (!rawData || !obj || !fieldMapping.length) return;
+    const failures = [];
+    let passed = 0;
+    const rowsOut = rawData.rows.map((row, ri) => {
+      const out = {};
+      let ok = true;
+      for (const m of fieldMapping) {
+        const tf = obj.target_fields.find(f => f.name === m.target_field);
+        const raw = m.source_column ? (row[rawData.headers.indexOf(m.source_column)] || '') : '';
+        const val = m.action && m.action !== 'none' ? applyAction(m.action, raw) : raw;
+        out[m.target_field] = val;
+        if (tf?.required && !String(val).trim()) { failures.push({ row: ri + 1, field: tf.name, reason: 'Required field is empty' }); ok = false; }
+        if (tf?.pattern) {
+          try { if (val && !new RegExp(tf.pattern).test(val)) { failures.push({ row: ri + 1, field: tf.name, reason: `Does not match pattern ${tf.pattern}` }); ok = false; } } catch {}
+        }
+        const allowed = (tf?.allowed_values || '').split(',').map(s => s.trim()).filter(Boolean);
+        if (allowed.length && val && !allowed.includes(val)) { failures.push({ row: ri + 1, field: tf.name, reason: `Not in allowed values (${allowed.join(', ')})` }); ok = false; }
+        if (tf?.type === 'number' && val && isNaN(Number(val))) { failures.push({ row: ri + 1, field: tf.name, reason: 'Not a valid number' }); ok = false; }
+        if (tf?.type === 'email' && val && !String(val).includes('@')) { failures.push({ row: ri + 1, field: tf.name, reason: 'Not a valid email' }); ok = false; }
+      }
+      return { out, ok };
+    });
+    passed = rowsOut.filter(r => r.ok).length;
+    setMigValidation({
+      total: rawData.rows.length,
+      passed,
+      failed: rawData.rows.length - passed,
+      failures: failures.slice(0, 200),
+      totalFailures: failures.length,
+      headers: fieldMapping.map(m => m.target_field),
+      passingRows: rowsOut.filter(r => r.ok).map(r => fieldMapping.map(m => r.out[m.target_field])),
+    });
+  }
+
+  async function loadMigration() {
+    if (!migValidation || !migValidation.passingRows.length) return;
+    const obj = migrationObjects.find(o => o.id === selectedMigObjId);
+    await saveJob(
+      `${(obj?.name || 'migration').replace(/\s+/g, '_')}.csv`,
+      'migrated',
+      migValidation.headers,
+      migValidation.passingRows,
+      { migrationObjectId: selectedMigObjId, migrationObjectName: obj?.name, validation: { total: migValidation.total, passed: migValidation.passed, failed: migValidation.failed } },
+      setMigMsg
+    );
+  }
+
+  async function saveDefaultMapping() {
+    setMigBusy(true); setMigMsg('Saving mapping…');
+    try {
+      const r = await fetch(`/api/migration-objects/${selectedMigObjId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_mapping: fieldMapping }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Save failed.');
+      setMigMsg('✓ Mapping saved as default.');
+      refreshMigrationObjects();
+    } catch (err) {
+      setMigMsg('✗ ' + err.message);
+    }
+    setMigBusy(false);
   }
 
   // ── Render ────────────────────────────────────────────────
@@ -1220,6 +1400,179 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
               </div>
             )}
 
+            {/* MIGRATION OBJECTS */}
+            {tab === 'migrate' && (
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>🎯 Migration Objects</div>
+                <div className="info" style={{ marginBottom: 14 }}>
+                  <strong>SAP-style target schemas.</strong> Define a named object with required target fields, map your loaded columns to them with a transform, validate every row, then load only the rows that pass. Mappings can be saved as the default for that object, so the next file with the same shape maps instantly.
+                </div>
+
+                {/* Object library */}
+                {!migObjForm && (
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                    <button className="btn btn-p btn-sm" onClick={startNewMigObj}>+ New Migration Object</button>
+                  </div>
+                )}
+
+                {migObjForm && (
+                  <div style={{ background: 'var(--surf)', border: '1px solid var(--bdr)', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 10 }}>{migObjForm.id ? 'Edit Migration Object' : 'New Migration Object'}</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10, marginBottom: 12 }}>
+                      <div>
+                        <div className="inp-lbl">Name</div>
+                        <input className="inp" value={migObjForm.name} placeholder="e.g. Customer Master"
+                          onChange={e => setMigObjForm(f => ({ ...f, name: e.target.value }))} />
+                      </div>
+                      <div>
+                        <div className="inp-lbl">Description</div>
+                        <input className="inp" value={migObjForm.description} placeholder="optional"
+                          onChange={e => setMigObjForm(f => ({ ...f, description: e.target.value }))} />
+                      </div>
+                    </div>
+
+                    <div className="inp-lbl" style={{ marginBottom: 6 }}>Target Fields</div>
+                    {migObjForm.target_fields.length > 0 && (
+                      <div className="tbl-wrap" style={{ marginBottom: 8 }}><div className="tbl-scroll">
+                        <table className="tbl">
+                          <thead><tr><th>Field Name</th><th>Type</th><th>Required</th><th>Pattern (regex)</th><th>Allowed Values (comma-separated)</th><th></th></tr></thead>
+                          <tbody>{migObjForm.target_fields.map((tf, i) => (
+                            <tr key={i}>
+                              <td><input className="inp" style={{ minWidth: 120 }} value={tf.name} onChange={e => updateTargetFieldRow(i, { name: e.target.value })} /></td>
+                              <td>
+                                <select className="inp model-select" value={tf.type} onChange={e => updateTargetFieldRow(i, { type: e.target.value })}>
+                                  <option value="text">text</option>
+                                  <option value="number">number</option>
+                                  <option value="date">date</option>
+                                  <option value="email">email</option>
+                                </select>
+                              </td>
+                              <td style={{ textAlign: 'center' }}><input type="checkbox" checked={!!tf.required} onChange={e => updateTargetFieldRow(i, { required: e.target.checked })} /></td>
+                              <td><input className="inp" style={{ minWidth: 120 }} value={tf.pattern} onChange={e => updateTargetFieldRow(i, { pattern: e.target.value })} /></td>
+                              <td><input className="inp" style={{ minWidth: 140 }} value={tf.allowed_values} onChange={e => updateTargetFieldRow(i, { allowed_values: e.target.value })} /></td>
+                              <td><button className="btn btn-d btn-sm" onClick={() => removeTargetFieldRow(i)}>✕</button></td>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                      </div></div>
+                    )}
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
+                      <button className="btn btn-g btn-sm" onClick={addTargetFieldRow}>+ Add Target Field</button>
+                      <button className="btn btn-p btn-sm" onClick={saveMigObj} disabled={migBusy}>💾 Save Object</button>
+                      <button className="btn btn-g btn-sm" onClick={cancelMigObjForm}>Cancel</button>
+                      <span style={{ fontSize: 11, color: migMsg.startsWith('✓') ? 'var(--grn)' : migMsg.startsWith('✗') ? 'var(--red)' : 'var(--mut)' }}>{migMsg}</span>
+                    </div>
+                  </div>
+                )}
+
+                {migrationObjects.length === 0 && !migObjForm && (
+                  <div className="info">No migration objects yet. Click "+ New Migration Object" to define your first target schema.</div>
+                )}
+                {migrationObjects.map(obj => (
+                  <div key={obj.id} style={{ background: selectedMigObjId === obj.id ? '#00e5a00c' : 'var(--surf)', border: `1px solid ${selectedMigObjId === obj.id ? 'var(--grn)' : 'var(--bdr)'}`, borderRadius: 8, padding: 13, marginBottom: 9, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 700 }}>{obj.name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--mut)', marginTop: 3 }}>
+                        {obj.description ? obj.description + ' · ' : ''}{(obj.target_fields || []).length} target field(s){obj.default_mapping ? ' · has default mapping' : ''}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button className="btn btn-p btn-sm" onClick={() => selectMigObj(obj.id)} disabled={!rawData}>{selectedMigObjId === obj.id ? '✓ Selected' : 'Select'}</button>
+                      <button className="btn btn-g btn-sm" onClick={() => editMigObj(obj)}>Edit</button>
+                      <button className="btn btn-d btn-sm" onClick={() => deleteMigObj(obj.id)}>Delete</button>
+                    </div>
+                  </div>
+                ))}
+
+                {selectedMigObjId && !rawData && (
+                  <div className="info" style={{ marginTop: 12 }}>Load a dataset on the Ingest tab to map it to this migration object.</div>
+                )}
+
+                {/* Field Mapping */}
+                {selectedMigObjId && rawData && fieldMapping.length > 0 && (
+                  <>
+                    <hr className="divider" />
+                    <div className="flex-row">
+                      <span style={{ fontSize: 13, fontWeight: 800 }}>Map Fields</span>
+                      <button className="btn btn-g btn-sm" onClick={reSuggestMapping}>↺ Re-suggest Mapping</button>
+                    </div>
+                    <div className="tbl-wrap" style={{ marginBottom: 12 }}><div className="tbl-scroll">
+                      <table className="tbl">
+                        <thead><tr><th>Target Field</th><th>Source Column</th><th>Transform</th></tr></thead>
+                        <tbody>{fieldMapping.map((m, i) => {
+                          const tf = migrationObjects.find(o => o.id === selectedMigObjId)?.target_fields?.find(f => f.name === m.target_field);
+                          return (
+                            <tr key={m.target_field}>
+                              <td>{m.target_field}{tf?.required && <span style={{ color: 'var(--red)' }}> *</span>}</td>
+                              <td>
+                                <select className="inp model-select" value={m.source_column} onChange={e => updateMapping(i, { source_column: e.target.value })}>
+                                  <option value="">— none —</option>
+                                  {rawData.headers.map(h => <option key={h} value={h}>{h}</option>)}
+                                </select>
+                              </td>
+                              <td>
+                                <select className="inp model-select" value={m.action} onChange={e => updateMapping(i, { action: e.target.value })}>
+                                  <option value="none">none</option>
+                                  {ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
+                                </select>
+                              </td>
+                            </tr>
+                          );
+                        })}</tbody>
+                      </table>
+                    </div></div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
+                      <button className="btn btn-p btn-sm" onClick={validateMigration}>▶ Validate</button>
+                      {!migValidation && <span style={{ fontSize: 11, color: 'var(--mut)' }}>{migMsg}</span>}
+                    </div>
+                  </>
+                )}
+
+                {/* Validation + Load */}
+                {migValidation && (
+                  <>
+                    <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Validation Results</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginBottom: 16 }}>
+                      {[
+                        { val: migValidation.total, label: 'Total Rows', color: 'var(--blu)' },
+                        { val: migValidation.passed, label: 'Passed', color: 'var(--grn)' },
+                        { val: migValidation.failed, label: 'Failed', color: migValidation.failed ? 'var(--red)' : 'var(--mut)' },
+                      ].map(({ val, label, color }) => (
+                        <div key={label} style={{ background: 'var(--surf)', border: '1px solid var(--bdr)', borderRadius: 7, padding: 12, textAlign: 'center' }}>
+                          <div style={{ fontSize: 22, fontWeight: 800, color }}>{val}</div>
+                          <div style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--mut)', textTransform: 'uppercase', letterSpacing: .5 }}>{label}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {migValidation.failures.length > 0 && (
+                      <div className="tbl-wrap" style={{ marginBottom: 16 }}><div className="tbl-scroll">
+                        <table className="tbl">
+                          <thead><tr><th>Row</th><th>Field</th><th>Reason</th></tr></thead>
+                          <tbody>{migValidation.failures.map((f, i) => (
+                            <tr key={i}><td>#{f.row}</td><td>{f.field}</td><td style={{ color: 'var(--red)' }}>{f.reason}</td></tr>
+                          ))}</tbody>
+                        </table>
+                      </div></div>
+                    )}
+                    {migValidation.totalFailures > migValidation.failures.length && (
+                      <div style={{ fontSize: 11, color: 'var(--mut)', marginTop: -10, marginBottom: 16 }}>
+                        Showing first {migValidation.failures.length} of {migValidation.totalFailures} issue(s).
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <button className="btn btn-p btn-sm" onClick={loadMigration} disabled={migValidation.passingRows.length === 0}>
+                        💾 Load to Database ({migValidation.passed} of {migValidation.total} rows)
+                      </button>
+                      <button className="btn btn-g btn-sm" onClick={saveDefaultMapping} disabled={migBusy}>💾 Save as Default Mapping</button>
+                      <span style={{ fontSize: 11, color: migMsg.startsWith('✓') ? 'var(--grn)' : migMsg.startsWith('✗') ? 'var(--red)' : 'var(--mut)' }}>{migMsg}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* DATABASE */}
             {tab === 'db' && (
               <div>
@@ -1231,10 +1584,10 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                   <button className="btn btn-g btn-sm" onClick={refreshJobs}>↺ Refresh</button>
                 </div>
                 {pastJobs.length === 0
-                  ? <div className="info">No data saved yet. Use a "💾 Save to Database" button on the Ingest, AI Cleanse, or Duplicates tab.</div>
+                  ? <div className="info">No data saved yet. Use a "💾 Save to Database" button on the Ingest, AI Cleanse, Duplicates, or Migration Objects tab.</div>
                   : pastJobs.map(j => {
-                    const badge = { uploaded: 'b-grn', ai_cleaned: 'b-pur', rule_cleaned: 'b-warn', deduplicated: 'b-red' }[j.status] || 'b-grn';
-                    const label = { uploaded: 'Uploaded', ai_cleaned: 'AI Cleaned', rule_cleaned: 'Rule Cleaned', deduplicated: 'Deduplicated' }[j.status] || j.status;
+                    const badge = { uploaded: 'b-grn', ai_cleaned: 'b-pur', rule_cleaned: 'b-warn', deduplicated: 'b-red', migrated: 'b-blu' }[j.status] || 'b-grn';
+                    const label = { uploaded: 'Uploaded', ai_cleaned: 'AI Cleaned', rule_cleaned: 'Rule Cleaned', deduplicated: 'Deduplicated', migrated: 'Migrated' }[j.status] || j.status;
                     return (
                       <div key={j.id} style={{ background: 'var(--surf)', border: '1px solid var(--bdr)', borderRadius: 8, padding: 13, marginBottom: 9 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

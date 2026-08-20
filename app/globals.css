@@ -18,6 +18,7 @@ body{background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:14p
 .b-pur{background:#8b5cf620;color:#a78bfa;border-color:#8b5cf640}
 .b-red{background:#ef444420;color:#f87171;border-color:#ef444430}
 .b-warn{background:#f59e0b20;color:var(--warn);border-color:#f59e0b40}
+.b-blu{background:#3b82f620;color:var(--blu);border-color:#3b82f640}
 
 /* Layout */
 .layout{display:grid;grid-template-columns:250px 1fr;height:calc(100vh - 49px)}
