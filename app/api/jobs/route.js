@@ -10,7 +10,7 @@ export async function GET() {
   const sb = supabaseAdmin();
   const { data, error } = await sb
     .from('jobs')
-    .select('id, filename, status, row_count, created_at, cleaned_file_path')
+    .select('id, filename, status, row_count, created_at, data')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(20);
@@ -19,17 +19,5 @@ export async function GET() {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
-  const jobs = [];
-  for (const job of data) {
-    let downloadUrl = null;
-    if (job.cleaned_file_path) {
-      const { data: signed } = await sb.storage
-        .from('cleaned-files')
-        .createSignedUrl(job.cleaned_file_path, 3600);
-      downloadUrl = signed?.signedUrl || null;
-    }
-    jobs.push({ ...job, downloadUrl });
-  }
-
-  return Response.json({ jobs });
+  return Response.json({ jobs: data });
 }

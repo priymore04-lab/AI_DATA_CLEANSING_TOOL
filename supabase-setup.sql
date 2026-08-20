@@ -15,8 +15,13 @@ create table if not exists jobs (
   row_count int,
   correction_plan jsonb,
   cleaned_file_path text,
+  data jsonb,
   created_at timestamptz not null default now()
 );
+
+-- Migration: if you created the jobs table before the `data` column existed,
+-- run this once in the Supabase SQL Editor to add it:
+--   alter table jobs add column if not exists data jsonb;
 
 create index if not exists jobs_user_id_idx on jobs (user_id, created_at desc);
 

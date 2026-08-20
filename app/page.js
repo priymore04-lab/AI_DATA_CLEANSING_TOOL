@@ -31,8 +31,8 @@ const GUIDES = [
     desc:'Every change and flagged issue is logged with a timestamp, field, before/after value, and confidence score so you can trace exactly what the pipeline changed and why.' },
   { id:'dedup', tab:'dedup', icon:'🔁', title:'Duplicate Detection', level:'Intermediate', duration:'4 min',
     desc:'Two modes: Check Duplicates removes exact-match rows based on just the fields you select; Fuzzy Duplicates compares columns with Levenshtein, token, or combined similarity and a threshold to surface near-duplicate records that exact matching would miss.' },
-  { id:'db', tab:'db', icon:'🗄️', title:'Job History', level:'Beginner', duration:'1 min',
-    desc:'Every saved cleanse job is stored to your account with row counts and status, so you can revisit or re-download results from past runs.' },
+  { id:'db', tab:'db', icon:'🗄️', title:'Saved Data History', level:'Beginner', duration:'1 min',
+    desc:'Click "💾 Save to Database" after uploading, AI cleansing, rule cleansing, or removing duplicates to store the dataset in your account — with row counts, status, an inline preview, and re-download from past runs.' },
   { id:'setup', tab:'setup', icon:'🤖', title:'Configuring Groq', level:'Beginner', duration:'3 min',
     desc:'Connect your free Groq API key, pick a model based on speed vs. context needs, and set domain context so the AI agent follows your field-specific rules automatically.' },
 ];
@@ -163,6 +163,8 @@ export default function Home() {
   const [cleanseMsg, setCleanseMsg] = useState('');
   const [pastJobs, setPastJobs] = useState([]);
   const [guideVotes, setGuideVotes] = useState({});
+  const [fileName, setFileName] = useState('data.csv');
+  const [ingestMsg, setIngestMsg] = useState('');
 
   // AI chat
   const [rulesMsgs, setRulesMsgs] = useState([{ cls: 'sys', text: 'Click "Analyze Data & Suggest Rules" and I\'ll look at your columns and propose a rule set — or just tell me what to add, e.g. "add rules for name, email and phone".' }]);
@@ -172,6 +174,7 @@ export default function Home() {
   const [cleanseMsgs, setCleanseMsgs] = useState([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
   const [cleanseInput, setCleanseInput] = useState('');
   const [agentHistory, setAgentHistory] = useState([]);
+  const [agentToolLog, setAgentToolLog] = useState([]);
   const [chatBusy, setChatBusy] = useState(false);
   const cleanseMsgsRef = useRef(null);
 
@@ -237,11 +240,13 @@ export default function Home() {
   function loadSample(key) {
     const s = SAMPLES[key];
     setRawData(s);
+    setFileName(`${key}_sample.csv`);
+    setIngestMsg('');
     setStats({ total: s.rows.length, issues: 0, fixed: 0, review: 0 });
     setDedupCols(s.headers.map(() => false));
     setDedupResults(null); setDedupRemoveResult(null); setDedupMsg(''); setDedupPreview(null); setDedupFuzzyRemoveResult(null);
     setCleanedData([]); setAuditEntries([]); setDqScore(null);
-    setAgentHistory([]);
+    setAgentHistory([]); setAgentToolLog([]);
     setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
     setRulesHistory([]); setPendingRuleSuggestions(null);
     setRulesMsgs([{ cls: 'sys', text: 'Click "Analyze Data & Suggest Rules" and I\'ll look at your columns and propose a rule set — or just tell me what to add, e.g. "add rules for name, email and phone".' }]);
@@ -255,11 +260,13 @@ export default function Home() {
         const headers = res.data[0];
         const rows = res.data.slice(1).map(r => headers.map((_, i) => r[i] || ''));
         setRawData({ headers, rows });
+        setFileName(file.name || 'data.csv');
+        setIngestMsg('');
         setStats({ total: rows.length, issues: 0, fixed: 0, review: 0 });
         setDedupCols(headers.map(() => false));
         setDedupResults(null); setDedupRemoveResult(null); setDedupMsg(''); setDedupPreview(null); setDedupFuzzyRemoveResult(null);
         setCleanedData([]); setAuditEntries([]); setDqScore(null);
-        setAgentHistory([]);
+        setAgentHistory([]); setAgentToolLog([]);
         setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]);
         setRulesHistory([]); setPendingRuleSuggestions(null);
         setRulesMsgs([{ cls: 'sys', text: 'Click "Analyze Data & Suggest Rules" and I\'ll look at your columns and propose a rule set — or just tell me what to add, e.g. "add rules for name, email and phone".' }]);
@@ -337,6 +344,23 @@ export default function Home() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = name; a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function saveJob(name, status, headers, rows, meta, onMsg) {
+    onMsg('Saving…');
+    try {
+      const r = await fetch('/api/jobs/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: name, status, headers, rows, meta: meta || null }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Save failed.');
+      onMsg('✓ Saved to database.');
+      refreshJobs();
+    } catch (err) {
+      onMsg('✗ ' + err.message);
+    }
   }
 
   // ── AI chat ──────────────────────────────────────────────
@@ -466,6 +490,8 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
         setRawData({ headers: newHeaders, rows: newRows });
         setStats(s => ({ ...s, total: newRows.length }));
       }
+
+      if (data.toolLog?.length) setAgentToolLog(t => [...t, ...data.toolLog]);
 
       // Persist conversation so the agent remembers context
       setAgentHistory(h => [...h, { role: 'user', content: p }, { role: 'assistant', content: data.reply }]);
@@ -724,7 +750,9 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                     <div className="flex-row">
                       <span style={{ fontSize: 13, fontWeight: 800 }}>Raw Data Preview</span>
                       <button className="btn btn-p btn-sm" onClick={runProfile}>▶ Profile Data</button>
+                      <button className="btn btn-p btn-sm" onClick={() => saveJob(fileName, 'uploaded', rawData.headers, rawData.rows, null, setIngestMsg)}>💾 Save to Database</button>
                       <button className="btn btn-g btn-sm" onClick={clearAll}>✕ Clear</button>
+                      <span style={{ fontSize: 11, color: ingestMsg.startsWith('✓') ? 'var(--grn)' : ingestMsg.startsWith('✗') ? 'var(--red)' : 'var(--mut)' }}>{ingestMsg}</span>
                     </div>
                     <div className="tbl-wrap"><div className="tbl-scroll">
                       <table className="tbl">
@@ -887,11 +915,13 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                       <span style={{ fontSize: 13, fontWeight: 800 }}>Live Data Preview</span>
                       <span style={{ fontSize: 11, color: 'var(--mut)', fontFamily: 'var(--mono)' }}>{rawData.rows.length} rows · {rawData.headers.length} cols</span>
                       <button className="btn btn-g btn-sm" onClick={() => { const csv = Papa.unparse({ fields: rawData.headers, data: rawData.rows }); download(csv, 'data.csv'); }}>↓ Download CSV</button>
+                      <button className="btn btn-p btn-sm" onClick={() => saveJob(fileName, 'ai_cleaned', rawData.headers, rawData.rows, { toolLog: agentToolLog }, setCleanseMsg)}>💾 Save to Database</button>
                       {agentHistory.length > 0 && (
-                        <button className="btn btn-d btn-sm" onClick={() => { setAgentHistory([]); setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]); }}>
+                        <button className="btn btn-d btn-sm" onClick={() => { setAgentHistory([]); setAgentToolLog([]); setCleanseMsgs([{ cls: 'sys', text: 'Hi, I\'m your AI data assistant 👋 Ask me anything — data standards, key fields for a system like SAP, or tell me what to clean, e.g. "standardize the country column" or "what are the key columns for a Material master in SAP?".' }]); }}>
                           ↺ Reset chat
                         </button>
                       )}
+                      <span style={{ fontSize: 11, color: cleanseMsg.startsWith('✓') ? 'var(--grn)' : cleanseMsg.startsWith('✗') ? 'var(--red)' : 'var(--mut)' }}>{cleanseMsg}</span>
                     </div>
                     <div className="tbl-wrap"><div className="tbl-scroll">
                       <table className="tbl">
@@ -912,6 +942,7 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                         {cleanedData.length > 0 && <>
                           <button className="btn btn-g btn-sm" onClick={exportClean}>↓ Clean CSV</button>
                           <button className="btn btn-g btn-sm" onClick={exportAudit}>↓ Audit CSV</button>
+                          <button className="btn btn-p btn-sm" onClick={() => saveJob(fileName, 'rule_cleaned', rawData.headers, cleanedData.map(r => r.cleaned), { auditEntries: auditEntries.length }, setCleanseMsg)}>💾 Save to Database</button>
                         </>}
                         <span style={{ fontSize: 11, color: cleanseMsg.startsWith('✓') ? 'var(--grn)' : 'var(--mut)' }}>
                           {cleanseBusy ? <><span className="spin" /> Processing...</> : cleanseMsg}
@@ -1059,8 +1090,10 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                           <strong>{dedupRemoveResult.cols ? dedupRemoveResult.cols.join(', ') : 'all columns (exact row match)'}</strong>.
                           {' '}{dedupRemoveResult.remaining} row(s) remain.
                         </div>
-                        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
                           <button className="btn btn-g btn-sm" onClick={() => { const csv = Papa.unparse({ fields: rawData.headers, data: rawData.rows }); download(csv, 'deduplicated_data.csv'); }}>↓ Download Deduplicated CSV</button>
+                          <button className="btn btn-p btn-sm" onClick={() => saveJob(fileName, 'deduplicated', rawData.headers, rawData.rows, { mode: 'exact', removed: dedupRemoveResult.removed, cols: dedupRemoveResult.cols }, setDedupMsg)}>💾 Save to Database</button>
+                          <span style={{ fontSize: 11, color: dedupMsg.startsWith('✓') ? 'var(--grn)' : dedupMsg.startsWith('✗') ? 'var(--red)' : 'var(--mut)' }}>{dedupMsg}</span>
                         </div>
                         <div className="tbl-wrap"><div className="tbl-scroll">
                           <table className="tbl">
@@ -1124,8 +1157,10 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                         Removed <strong>{dedupFuzzyRemoveResult.removed}</strong> duplicate row(s) flagged above the similarity threshold, keeping the first occurrence of each cluster.
                         {' '}{dedupFuzzyRemoveResult.remaining} row(s) remain.
                       </div>
-                      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
                         <button className="btn btn-g btn-sm" onClick={() => { const csv = Papa.unparse({ fields: rawData.headers, data: rawData.rows }); download(csv, 'deduplicated_data.csv'); }}>↓ Download Deduplicated CSV</button>
+                        <button className="btn btn-p btn-sm" onClick={() => saveJob(fileName, 'deduplicated', rawData.headers, rawData.rows, { mode: 'fuzzy', removed: dedupFuzzyRemoveResult.removed }, setDedupMsg)}>💾 Save to Database</button>
+                        <span style={{ fontSize: 11, color: dedupMsg.startsWith('✓') ? 'var(--grn)' : dedupMsg.startsWith('✗') ? 'var(--red)' : 'var(--mut)' }}>{dedupMsg}</span>
                       </div>
                       <div className="tbl-wrap"><div className="tbl-scroll">
                         <table className="tbl">
@@ -1188,26 +1223,53 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
             {/* DATABASE */}
             {tab === 'db' && (
               <div>
-                <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>🗄️ Cleanse Job History</div>
+                <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>🗄️ Saved Data History</div>
                 <div className="info" style={{ marginBottom: 14 }}>
-                  <strong>Past cleanse jobs</strong> saved to your account.
+                  <strong>Every dataset you've saved</strong> — from upload, AI cleanse, rule cleanse, or duplicate removal — is stored in your account's database and listed here.
                 </div>
                 <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                   <button className="btn btn-g btn-sm" onClick={refreshJobs}>↺ Refresh</button>
                 </div>
                 {pastJobs.length === 0
-                  ? <div className="info">No jobs saved yet. Run a cleanse and save to your account.</div>
-                  : pastJobs.map(j => (
-                    <div key={j.id} style={{ background: 'var(--surf)', border: '1px solid var(--bdr)', borderRadius: 8, padding: 13, marginBottom: 9, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 700 }}>{j.filename}</div>
-                        <div style={{ fontSize: 11, color: 'var(--mut)', marginTop: 3 }}>
-                          {j.row_count ?? '?'} rows · {j.status} · {new Date(j.created_at).toLocaleString()}
+                  ? <div className="info">No data saved yet. Use a "💾 Save to Database" button on the Ingest, AI Cleanse, or Duplicates tab.</div>
+                  : pastJobs.map(j => {
+                    const badge = { uploaded: 'b-grn', ai_cleaned: 'b-pur', rule_cleaned: 'b-warn', deduplicated: 'b-red' }[j.status] || 'b-grn';
+                    const label = { uploaded: 'Uploaded', ai_cleaned: 'AI Cleaned', rule_cleaned: 'Rule Cleaned', deduplicated: 'Deduplicated' }[j.status] || j.status;
+                    return (
+                      <div key={j.id} style={{ background: 'var(--surf)', border: '1px solid var(--bdr)', borderRadius: 8, padding: 13, marginBottom: 9 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 700 }}>{j.filename}</div>
+                            <div style={{ fontSize: 11, color: 'var(--mut)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span className={`badge ${badge}`}>{label}</span>
+                              {j.row_count ?? '?'} rows · {new Date(j.created_at).toLocaleString()}
+                            </div>
+                          </div>
+                          {j.data && (
+                            <button className="btn btn-g btn-sm" onClick={() => { const csv = Papa.unparse({ fields: j.data.headers, data: j.data.rows }); download(csv, j.filename || 'data.csv'); }}>↓ Download</button>
+                          )}
                         </div>
+                        {j.data && (
+                          <details style={{ marginTop: 10 }}>
+                            <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--mut)', fontWeight: 700 }}>Preview saved data ({j.data.rows.length} rows)</summary>
+                            <div className="tbl-wrap" style={{ marginTop: 8 }}><div className="tbl-scroll">
+                              <table className="tbl">
+                                <thead><tr>{j.data.headers.map(h => <th key={h}>{h}</th>)}</tr></thead>
+                                <tbody>{j.data.rows.slice(0, 20).map((row, i) => (
+                                  <tr key={i}>{row.map((c, k) => <td key={k}>{c || <span className="ce">∅</span>}</td>)}</tr>
+                                ))}</tbody>
+                              </table>
+                            </div></div>
+                            {j.data.rows.length > 20 && (
+                              <div style={{ fontSize: 11, color: 'var(--mut)', marginTop: 6 }}>
+                                Showing first 20 of {j.data.rows.length} row(s). Download for the full dataset.
+                              </div>
+                            )}
+                          </details>
+                        )}
                       </div>
-                      {j.downloadUrl && <a href={j.downloadUrl}><button className="btn btn-g btn-sm">↓ Download</button></a>}
-                    </div>
-                  ))
+                    );
+                  })
                 }
               </div>
             )}
