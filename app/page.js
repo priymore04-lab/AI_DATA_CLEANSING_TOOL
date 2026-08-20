@@ -32,7 +32,7 @@ const GUIDES = [
   { id:'dedup', tab:'dedup', icon:'🔁', title:'Duplicate Detection', level:'Intermediate', duration:'4 min',
     desc:'Two modes: Check Duplicates removes exact-match rows based on just the fields you select; Fuzzy Duplicates compares columns with Levenshtein, token, or combined similarity and a threshold to surface near-duplicate records that exact matching would miss.' },
   { id:'migrate', tab:'migrate', icon:'🎯', title:'Migration Objects', level:'Advanced', duration:'6 min',
-    desc:'SAP-style target schemas: define a named object with required target fields, map your loaded columns to them with a transform, validate every row against the target rules, then load only the passing rows — with the mapping saved for reuse next time.' },
+    desc:'SAP-style target schemas: define a named object with target fields carrying both a transform rule and validation rules (required, type, pattern, allowed values), map your loaded columns to them, then validate to split every row into a Valid table and an Invalid table — each independently downloadable and loadable to the database, with the mapping saved for reuse next time.' },
   { id:'db', tab:'db', icon:'🗄️', title:'Saved Data History', level:'Beginner', duration:'1 min',
     desc:'Click "💾 Save to Database" after uploading, AI cleansing, rule cleansing, or removing duplicates to store the dataset in your account — with row counts, status, an inline preview, and re-download from past runs.' },
   { id:'setup', tab:'setup', icon:'🤖', title:'Configuring Groq', level:'Beginner', duration:'3 min',
@@ -730,50 +730,79 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
     setMigValidation(null);
   }
 
+  // A field's validation rules, summarized for display next to its transform rule.
+  function fieldValidationSummary(tf) {
+    if (!tf) return '—';
+    const parts = [];
+    if (tf.required) parts.push('Required');
+    if (tf.type && tf.type !== 'text') parts.push(`Type: ${tf.type}`);
+    if (tf.pattern) parts.push(`Pattern: ${tf.pattern}`);
+    if (tf.allowed_values) parts.push(`Allowed: ${tf.allowed_values}`);
+    return parts.length ? parts.join(' · ') : '—';
+  }
+
   function validateMigration() {
     const obj = migrationObjects.find(o => o.id === selectedMigObjId);
     if (!rawData || !obj || !fieldMapping.length) return;
-    const failures = [];
-    let passed = 0;
-    const rowsOut = rawData.rows.map((row, ri) => {
+    const headers = fieldMapping.map(m => m.target_field);
+    const validRows = [];
+    const invalidRows = [];
+    const invalidReasons = [];
+    for (const row of rawData.rows) {
       const out = {};
-      let ok = true;
+      const reasons = [];
       for (const m of fieldMapping) {
         const tf = obj.target_fields.find(f => f.name === m.target_field);
         const raw = m.source_column ? (row[rawData.headers.indexOf(m.source_column)] || '') : '';
         const val = m.action && m.action !== 'none' ? applyAction(m.action, raw) : raw;
         out[m.target_field] = val;
-        if (tf?.required && !String(val).trim()) { failures.push({ row: ri + 1, field: tf.name, reason: 'Required field is empty' }); ok = false; }
+        if (tf?.required && !String(val).trim()) reasons.push(`${tf.name}: required field is empty`);
         if (tf?.pattern) {
-          try { if (val && !new RegExp(tf.pattern).test(val)) { failures.push({ row: ri + 1, field: tf.name, reason: `Does not match pattern ${tf.pattern}` }); ok = false; } } catch {}
+          try { if (val && !new RegExp(tf.pattern).test(val)) reasons.push(`${tf.name}: does not match pattern ${tf.pattern}`); } catch {}
         }
         const allowed = (tf?.allowed_values || '').split(',').map(s => s.trim()).filter(Boolean);
-        if (allowed.length && val && !allowed.includes(val)) { failures.push({ row: ri + 1, field: tf.name, reason: `Not in allowed values (${allowed.join(', ')})` }); ok = false; }
-        if (tf?.type === 'number' && val && isNaN(Number(val))) { failures.push({ row: ri + 1, field: tf.name, reason: 'Not a valid number' }); ok = false; }
-        if (tf?.type === 'email' && val && !String(val).includes('@')) { failures.push({ row: ri + 1, field: tf.name, reason: 'Not a valid email' }); ok = false; }
+        if (allowed.length && val && !allowed.includes(val)) reasons.push(`${tf.name}: not in allowed values (${allowed.join(', ')})`);
+        if (tf?.type === 'number' && val && isNaN(Number(val))) reasons.push(`${tf.name}: not a valid number`);
+        if (tf?.type === 'email' && val && !String(val).includes('@')) reasons.push(`${tf.name}: not a valid email`);
       }
-      return { out, ok };
-    });
-    passed = rowsOut.filter(r => r.ok).length;
+      const values = headers.map(h => out[h]);
+      if (reasons.length) { invalidRows.push(values); invalidReasons.push(reasons.join('; ')); }
+      else validRows.push(values);
+    }
     setMigValidation({
       total: rawData.rows.length,
-      passed,
-      failed: rawData.rows.length - passed,
-      failures: failures.slice(0, 200),
-      totalFailures: failures.length,
-      headers: fieldMapping.map(m => m.target_field),
-      passingRows: rowsOut.filter(r => r.ok).map(r => fieldMapping.map(m => r.out[m.target_field])),
+      passed: validRows.length,
+      failed: invalidRows.length,
+      headers,
+      validRows,
+      invalidRows,
+      invalidReasons,
     });
   }
 
-  async function loadMigration() {
-    if (!migValidation || !migValidation.passingRows.length) return;
+  async function loadValidMigration() {
+    if (!migValidation || !migValidation.validRows.length) return;
     const obj = migrationObjects.find(o => o.id === selectedMigObjId);
     await saveJob(
-      `${(obj?.name || 'migration').replace(/\s+/g, '_')}.csv`,
+      `${(obj?.name || 'migration').replace(/\s+/g, '_')}_valid.csv`,
       'migrated',
       migValidation.headers,
-      migValidation.passingRows,
+      migValidation.validRows,
+      { migrationObjectId: selectedMigObjId, migrationObjectName: obj?.name, validation: { total: migValidation.total, passed: migValidation.passed, failed: migValidation.failed } },
+      setMigMsg
+    );
+  }
+
+  async function loadInvalidMigration() {
+    if (!migValidation || !migValidation.invalidRows.length) return;
+    const obj = migrationObjects.find(o => o.id === selectedMigObjId);
+    const headers = [...migValidation.headers, 'ValidationErrors'];
+    const rows = migValidation.invalidRows.map((r, i) => [...r, migValidation.invalidReasons[i]]);
+    await saveJob(
+      `${(obj?.name || 'migration').replace(/\s+/g, '_')}_invalid.csv`,
+      'migration_invalid',
+      headers,
+      rows,
       { migrationObjectId: selectedMigObjId, migrationObjectName: obj?.name, validation: { total: migValidation.total, passed: migValidation.passed, failed: migValidation.failed } },
       setMigMsg
     );
@@ -1405,7 +1434,7 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
               <div>
                 <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>🎯 Migration Objects</div>
                 <div className="info" style={{ marginBottom: 14 }}>
-                  <strong>SAP-style target schemas.</strong> Define a named object with required target fields, map your loaded columns to them with a transform, validate every row, then load only the rows that pass. Mappings can be saved as the default for that object, so the next file with the same shape maps instantly.
+                  <strong>SAP-style target schemas.</strong> Each target field carries both a <strong>transform rule</strong> (trim, title case, standardize, etc.) and <strong>validation rules</strong> (required, type, pattern, allowed values). Map your loaded columns to the target fields, validate, and every row is split into a Valid table and an Invalid table — each viewable, downloadable, and independently loadable to the database. Mappings can be saved as the default for that object, so the next file with the same shape maps instantly.
                 </div>
 
                 {/* Object library */}
@@ -1498,7 +1527,7 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                     </div>
                     <div className="tbl-wrap" style={{ marginBottom: 12 }}><div className="tbl-scroll">
                       <table className="tbl">
-                        <thead><tr><th>Target Field</th><th>Source Column</th><th>Transform</th></tr></thead>
+                        <thead><tr><th>Target Field</th><th>Source Column</th><th>Transform Rule</th><th>Validation Rule</th></tr></thead>
                         <tbody>{fieldMapping.map((m, i) => {
                           const tf = migrationObjects.find(o => o.id === selectedMigObjId)?.target_fields?.find(f => f.name === m.target_field);
                           return (
@@ -1516,11 +1545,15 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                                   {ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
                                 </select>
                               </td>
+                              <td style={{ fontSize: 11, color: 'var(--mut)' }}>{fieldValidationSummary(tf)}</td>
                             </tr>
                           );
                         })}</tbody>
                       </table>
                     </div></div>
+                    <div className="info" style={{ marginBottom: 12 }}>
+                      Validation rules (Required / Type / Pattern / Allowed Values) come from the target field definitions on the migration object itself — edit the object above to change them.
+                    </div>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
                       <button className="btn btn-p btn-sm" onClick={validateMigration}>▶ Validate</button>
                       {!migValidation && <span style={{ fontSize: 11, color: 'var(--mut)' }}>{migMsg}</span>}
@@ -1528,15 +1561,15 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                   </>
                 )}
 
-                {/* Validation + Load */}
+                {/* Validation + Load — two tables: Valid and Invalid */}
                 {migValidation && (
                   <>
                     <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Validation Results</div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginBottom: 16 }}>
                       {[
                         { val: migValidation.total, label: 'Total Rows', color: 'var(--blu)' },
-                        { val: migValidation.passed, label: 'Passed', color: 'var(--grn)' },
-                        { val: migValidation.failed, label: 'Failed', color: migValidation.failed ? 'var(--red)' : 'var(--mut)' },
+                        { val: migValidation.passed, label: 'Valid', color: 'var(--grn)' },
+                        { val: migValidation.failed, label: 'Invalid', color: migValidation.failed ? 'var(--red)' : 'var(--mut)' },
                       ].map(({ val, label, color }) => (
                         <div key={label} style={{ background: 'var(--surf)', border: '1px solid var(--bdr)', borderRadius: 7, padding: 12, textAlign: 'center' }}>
                           <div style={{ fontSize: 22, fontWeight: 800, color }}>{val}</div>
@@ -1545,26 +1578,48 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                       ))}
                     </div>
 
-                    {migValidation.failures.length > 0 && (
+                    <div className="flex-row">
+                      <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--grn)' }}>✅ Valid Records ({migValidation.validRows.length})</span>
+                      {migValidation.validRows.length > 0 && <button className="btn btn-g btn-sm" onClick={() => { const csv = Papa.unparse({ fields: migValidation.headers, data: migValidation.validRows }); download(csv, 'valid_records.csv'); }}>↓ Download CSV</button>}
+                      {migValidation.validRows.length > 0 && <button className="btn btn-p btn-sm" onClick={loadValidMigration}>💾 Load Valid to Database</button>}
+                    </div>
+                    {migValidation.validRows.length > 0 ? (
                       <div className="tbl-wrap" style={{ marginBottom: 16 }}><div className="tbl-scroll">
                         <table className="tbl">
-                          <thead><tr><th>Row</th><th>Field</th><th>Reason</th></tr></thead>
-                          <tbody>{migValidation.failures.map((f, i) => (
-                            <tr key={i}><td>#{f.row}</td><td>{f.field}</td><td style={{ color: 'var(--red)' }}>{f.reason}</td></tr>
+                          <thead><tr>{migValidation.headers.map(h => <th key={h}>{h}</th>)}</tr></thead>
+                          <tbody>{migValidation.validRows.slice(0, 100).map((row, i) => (
+                            <tr key={i}>{row.map((c, j) => <td key={j}>{c || <span className="ce">∅</span>}</td>)}</tr>
                           ))}</tbody>
                         </table>
                       </div></div>
+                    ) : <div className="info" style={{ marginBottom: 16 }}>No rows passed validation.</div>}
+                    {migValidation.validRows.length > 100 && (
+                      <div style={{ fontSize: 11, color: 'var(--mut)', marginTop: -10, marginBottom: 16 }}>Showing first 100 of {migValidation.validRows.length} valid row(s).</div>
                     )}
-                    {migValidation.totalFailures > migValidation.failures.length && (
-                      <div style={{ fontSize: 11, color: 'var(--mut)', marginTop: -10, marginBottom: 16 }}>
-                        Showing first {migValidation.failures.length} of {migValidation.totalFailures} issue(s).
-                      </div>
+
+                    <div className="flex-row">
+                      <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--red)' }}>❌ Invalid Records ({migValidation.invalidRows.length})</span>
+                      {migValidation.invalidRows.length > 0 && <button className="btn btn-g btn-sm" onClick={() => { const csv = Papa.unparse({ fields: [...migValidation.headers, 'ValidationErrors'], data: migValidation.invalidRows.map((r, i) => [...r, migValidation.invalidReasons[i]]) }); download(csv, 'invalid_records.csv'); }}>↓ Download CSV</button>}
+                      {migValidation.invalidRows.length > 0 && <button className="btn btn-p btn-sm" onClick={loadInvalidMigration}>💾 Save Invalid to Database</button>}
+                    </div>
+                    {migValidation.invalidRows.length > 0 ? (
+                      <div className="tbl-wrap" style={{ marginBottom: 16 }}><div className="tbl-scroll">
+                        <table className="tbl">
+                          <thead><tr>{migValidation.headers.map(h => <th key={h}>{h}</th>)}<th>Validation Errors</th></tr></thead>
+                          <tbody>{migValidation.invalidRows.slice(0, 100).map((row, i) => (
+                            <tr key={i} style={{ background: '#ef444410' }}>
+                              {row.map((c, j) => <td key={j}>{c || <span className="ce">∅</span>}</td>)}
+                              <td style={{ color: 'var(--red)' }}>{migValidation.invalidReasons[i]}</td>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                      </div></div>
+                    ) : <div className="info" style={{ marginBottom: 16 }}>No invalid rows — everything passed.</div>}
+                    {migValidation.invalidRows.length > 100 && (
+                      <div style={{ fontSize: 11, color: 'var(--mut)', marginTop: -10, marginBottom: 16 }}>Showing first 100 of {migValidation.invalidRows.length} invalid row(s).</div>
                     )}
 
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <button className="btn btn-p btn-sm" onClick={loadMigration} disabled={migValidation.passingRows.length === 0}>
-                        💾 Load to Database ({migValidation.passed} of {migValidation.total} rows)
-                      </button>
                       <button className="btn btn-g btn-sm" onClick={saveDefaultMapping} disabled={migBusy}>💾 Save as Default Mapping</button>
                       <span style={{ fontSize: 11, color: migMsg.startsWith('✓') ? 'var(--grn)' : migMsg.startsWith('✗') ? 'var(--red)' : 'var(--mut)' }}>{migMsg}</span>
                     </div>
@@ -1586,8 +1641,8 @@ Keep the plain-English part concise — a few sentences or a short bullet list, 
                 {pastJobs.length === 0
                   ? <div className="info">No data saved yet. Use a "💾 Save to Database" button on the Ingest, AI Cleanse, Duplicates, or Migration Objects tab.</div>
                   : pastJobs.map(j => {
-                    const badge = { uploaded: 'b-grn', ai_cleaned: 'b-pur', rule_cleaned: 'b-warn', deduplicated: 'b-red', migrated: 'b-blu' }[j.status] || 'b-grn';
-                    const label = { uploaded: 'Uploaded', ai_cleaned: 'AI Cleaned', rule_cleaned: 'Rule Cleaned', deduplicated: 'Deduplicated', migrated: 'Migrated' }[j.status] || j.status;
+                    const badge = { uploaded: 'b-grn', ai_cleaned: 'b-pur', rule_cleaned: 'b-warn', deduplicated: 'b-red', migrated: 'b-blu', migration_invalid: 'b-red' }[j.status] || 'b-grn';
+                    const label = { uploaded: 'Uploaded', ai_cleaned: 'AI Cleaned', rule_cleaned: 'Rule Cleaned', deduplicated: 'Deduplicated', migrated: 'Migrated (Valid)', migration_invalid: 'Migrated (Invalid)' }[j.status] || j.status;
                     return (
                       <div key={j.id} style={{ background: 'var(--surf)', border: '1px solid var(--bdr)', borderRadius: 8, padding: 13, marginBottom: 9 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
